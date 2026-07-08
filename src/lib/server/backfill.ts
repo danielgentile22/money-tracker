@@ -1,0 +1,184 @@
+import type { Database } from 'better-sqlite3';
+import type { ReceiptSource } from './gmail';
+import type { Llm } from './llm';
+import { runLlmCategorization } from './llm-categorizer';
+import { enrichTransaction } from './receipt-extractor';
+import { triggerLookup } from './resolution';
+import { isSyncing } from './sync-runner';
+
+// Settings scans (the catch-up the per-sync pipeline never does), each with an
+// 'all' | 'month' scope:
+//  - categorization scan: every model-decidable Transaction through the batched
+//    unified categorizer (Rules and Corrections never touched)
+//  - receipt scan: a Gmail receipt search per posted spend charge, age gate
+//    ignored; fresh matches get enriched and re-categorized
+// Progress lives in settings as JSON so the page can poll a real bar.
+
+let running = false;
+
+export function isBackfilling(): boolean {
+	return running;
+}
+
+export type ScanProgress = { label: string; done: number; total: number };
+
+export function backfillProgress(db: Database): ScanProgress | null {
+	const raw = db
+		.prepare('SELECT value FROM settings WHERE key = ?')
+		.pluck()
+		.get('backfill_progress') as string | undefined;
+	if (!raw) return null;
+	try {
+		return JSON.parse(raw) as ScanProgress;
+	} catch {
+		return { label: raw, done: 0, total: 0 }; // pre-split plain-string progress
+	}
+}
+
+function progress(db: Database, label: string, done = 0, total = 0): void {
+	db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('backfill_progress', ?)").run(
+		JSON.stringify({ label, done, total })
+	);
+}
+
+/** The scan track record Settings shows: charges by receipt_search_state. */
+export function receiptScanStats(db: Database): Record<string, number> {
+	const rows = db
+		.prepare(
+			`SELECT COALESCE(receipt_search_state, 'never') AS s, COUNT(*) AS n FROM transactions
+			 WHERE pending = 0 AND is_transfer = 0 AND is_investment_activity = 0 AND amount_cents < 0
+			 GROUP BY s`
+		)
+		.all() as { s: string; n: number }[];
+	return Object.fromEntries(rows.map((r) => [r.s, r.n]));
+}
+
+const monthWindow = (scope: 'all' | 'month') =>
+	scope === 'month' ? "AND date >= date('now', '-1 month')" : '';
+
+/**
+ * AI categorization only — every model-decidable Transaction in scope gets the
+ * batched unified categorizer. Fire-and-forget from Settings; one scan at a
+ * time, never during a sync.
+ */
+export async function runCategorizationScan(
+	db: Database,
+	llm: Llm,
+	scope: 'all' | 'month' = 'all'
+): Promise<void> {
+	if (running || isSyncing()) return;
+	running = true;
+	try {
+		const ids = db
+			.prepare(
+				`SELECT id FROM transactions
+				 WHERE category_source IN ('plaid', 'llm', 'llm+receipt')
+				   AND is_transfer = 0 AND is_investment_activity = 0
+				 ${monthWindow(scope)}`
+			)
+			.pluck()
+			.all() as number[];
+		progress(db, 'categorizing', 0, ids.length);
+		// chunks match the categorizer's internal batch, so the bar moves per call
+		for (let i = 0; i < ids.length; i += 100) {
+			await runLlmCategorization(db, llm, ids.slice(i, i + 100)); // fail-soft on LlmUnavailable
+			progress(db, 'categorizing', Math.min(i + 100, ids.length), ids.length);
+		}
+		progress(db, `done — ${ids.length} categorized`, ids.length, ids.length);
+	} finally {
+		running = false;
+	}
+}
+
+/**
+ * Gmail receipt search only — 'all' redoes every posted spend charge from
+ * scratch, matched ones included; 'month' only revisits the last month's
+ * not-yet-matched charges. Fresh matches get their facts extracted onto the
+ * row; the Category is NOT re-judged — that's the categorization scan's job.
+ */
+export async function runReceiptScan(
+	db: Database,
+	source: ReceiptSource,
+	llm: Llm,
+	scope: 'all' | 'month' = 'all'
+): Promise<void> {
+	if (running || isSyncing()) return;
+	running = true;
+	try {
+		const charges = db
+			.prepare(
+				`SELECT id FROM transactions
+				 WHERE pending = 0 AND is_transfer = 0 AND is_investment_activity = 0
+				   AND amount_cents < 0
+				   ${monthWindow(scope)}
+				   ${scope === 'month' ? "AND (receipt_search_state IS NULL OR receipt_search_state != 'matched')" : ''}
+				 ORDER BY date DESC`
+			)
+			.pluck()
+			.all() as number[];
+		const matched = await lookupLoop(db, source, llm, charges, { recategorize: false });
+		progress(
+			db,
+			`done — ${charges.length} receipt searches, ${matched} matched`,
+			charges.length,
+			charges.length
+		);
+	} finally {
+		running = false;
+	}
+}
+
+/**
+ * The transactions-page bulk button: search Receipts on exactly these charges
+ * (age gate ignored), enrich and re-categorize fresh matches. Same
+ * one-at-a-time guard and progress channel as the Settings scans.
+ */
+export async function runLookupBatch(
+	db: Database,
+	source: ReceiptSource,
+	llm: Llm,
+	ids: number[]
+): Promise<void> {
+	if (running || isSyncing()) return;
+	running = true;
+	try {
+		const matched = await lookupLoop(db, source, llm, ids);
+		progress(db, `done — ${ids.length} receipt searches, ${matched} matched`, ids.length, ids.length);
+	} finally {
+		running = false;
+	}
+}
+
+async function lookupLoop(
+	db: Database,
+	source: ReceiptSource,
+	llm: Llm,
+	charges: number[],
+	opts: { recategorize: boolean } = { recategorize: true }
+): Promise<number> {
+	progress(db, 'searching receipts', 0, charges.length);
+	const matched: number[] = [];
+	// ponytail: 5 concurrent Gmail searches — ~5x faster, still far under the
+	// 250-units/sec quota; sqlite writes are synchronous so interleaving is safe
+	const CONCURRENCY = 5;
+	for (let i = 0; i < charges.length; i += CONCURRENCY) {
+		const chunk = charges.slice(i, i + CONCURRENCY);
+		// one bad charge never stops the scan
+		const outcomes = await Promise.all(
+			chunk.map((id) => triggerLookup(db, source, id).catch(() => null))
+		);
+		outcomes.forEach((o, j) => o === 'matched' && matched.push(chunk[j]));
+		progress(db, 'searching receipts', Math.min(i + CONCURRENCY, charges.length), charges.length);
+	}
+	// one LLM call per matched receipt, 5 at a time — progress per chunk so the
+	// bar keeps moving instead of freezing full for the whole extraction run
+	for (let i = 0; i < matched.length; i += CONCURRENCY) {
+		progress(db, `extracting ${matched.length} matched receipts`, i, matched.length);
+		await Promise.all(
+			matched.slice(i, i + CONCURRENCY).map((id) => enrichTransaction(db, llm, id).catch(() => {}))
+		);
+	}
+	progress(db, `extracting ${matched.length} matched receipts`, matched.length, matched.length);
+	if (opts.recategorize) await runLlmCategorization(db, llm, matched).catch(() => {});
+	return matched.length;
+}

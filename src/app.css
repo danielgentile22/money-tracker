@@ -1,0 +1,275 @@
+/* App shell — sidebar console layout on Halo tokens (halo.css is the foundation, untouched) */
+
+:root {
+	/* native form controls (date-picker calendar, selects) render dark */
+	color-scheme: dark;
+
+	/* fontsource variable fonts register these family names */
+	--font-display: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	--font-body: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.shell {
+	display: flex;
+	min-height: 100vh;
+}
+
+.sidebar {
+	width: 220px;
+	flex-shrink: 0;
+	position: sticky;
+	top: 0;
+	height: 100vh;
+	border-right: var(--border-width) solid var(--color-border);
+	padding: var(--space-5) var(--space-3);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+}
+
+.sidebar .nav-brand {
+	padding: 0 var(--space-3) var(--space-5);
+}
+
+.side-link {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: 8px 12px;
+	border-radius: var(--radius-md);
+	color: var(--color-text-secondary);
+	text-decoration: none;
+	font-size: 0.875rem;
+	transition:
+		background-color var(--motion-base) var(--easing-standard),
+		color var(--motion-base) var(--easing-standard);
+}
+
+.side-link:hover {
+	background-color: var(--color-surface);
+	color: var(--color-text-primary);
+}
+
+.side-link[aria-current='page'] {
+	background-color: var(--color-primary-soft);
+	color: var(--color-text-primary);
+}
+
+.side-link svg {
+	width: 16px;
+	height: 16px;
+	stroke-width: 1.75;
+}
+
+/* hidden sections fold: pinned to the bottom, right above the footer */
+.nav-more {
+	margin-top: auto;
+}
+
+.nav-more summary {
+	cursor: pointer;
+	list-style: none;
+	color: var(--color-text-muted);
+}
+
+.nav-more summary::-webkit-details-marker {
+	display: none;
+}
+
+.nav-more summary svg {
+	transition: transform var(--motion-base) var(--easing-standard);
+}
+
+.nav-more[open] summary svg {
+	transform: rotate(180deg);
+}
+
+.sidebar-foot {
+	margin-top: auto;
+	padding: var(--space-3);
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: var(--space-2);
+	border-top: var(--border-width) solid var(--color-border);
+}
+
+/* when the More fold is present it takes the flex slack instead */
+.nav-more ~ .sidebar-foot {
+	margin-top: 0;
+}
+
+.sidebar-foot .spinning svg {
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.sync-banner {
+	background-color: var(--color-danger-soft);
+	border: var(--border-width) solid var(--color-danger);
+	border-radius: var(--radius-md);
+	padding: var(--space-3) var(--space-4);
+	margin-bottom: var(--space-5);
+}
+
+.sync-banner a {
+	color: var(--color-text-primary);
+}
+
+.content {
+	flex: 1;
+	min-width: 0;
+	padding: var(--space-8);
+	max-width: 1200px;
+}
+
+.filters {
+	align-items: flex-end;
+	gap: var(--space-3);
+	margin-bottom: var(--space-4);
+	flex-wrap: wrap;
+}
+
+.filters .field {
+	min-width: 140px;
+}
+
+.ledger {
+	overflow-x: auto;
+}
+
+.ledger table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.ledger th {
+	font-family: var(--font-display);
+	font-size: var(--text-label-sm-size);
+	font-weight: var(--text-label-sm-weight);
+	letter-spacing: var(--text-label-sm-tracking);
+	text-transform: uppercase;
+	color: var(--color-text-secondary);
+	text-align: left;
+	padding: var(--space-3) var(--space-4);
+	border-bottom: var(--border-width) solid var(--color-border-strong);
+}
+
+.ledger td {
+	padding: var(--space-3) var(--space-4);
+	border-bottom: var(--border-width) solid var(--color-border);
+	font-size: var(--text-body-sm-size);
+}
+
+.ledger tr:last-child td {
+	border-bottom: none;
+}
+
+.ledger .num {
+	text-align: right;
+}
+
+.ledger .pos {
+	color: var(--color-success);
+}
+
+.ledger .neg {
+	color: var(--color-danger);
+}
+
+.ledger tr.pending td {
+	color: var(--color-text-muted);
+}
+
+.ledger tr.focused td {
+	background-color: var(--color-primary-soft);
+}
+
+.filters .input.amt {
+	width: 110px;
+}
+
+.filters input[type='date'] {
+	cursor: pointer;
+}
+
+.filters input[type='date']::-webkit-calendar-picker-indicator {
+	cursor: pointer;
+	opacity: 0.7;
+}
+
+.ledger .src {
+	font-size: 0.6875rem;
+	margin-left: var(--space-1);
+}
+
+.chip-btn {
+	cursor: pointer;
+}
+
+.chip-btn:hover {
+	background-color: var(--color-primary-soft);
+	border-color: var(--color-primary);
+}
+
+dialog.correction {
+	background-color: var(--color-elevated);
+	color: var(--color-text-primary);
+	border: var(--border-width) solid var(--color-border-strong);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--elevation-lg, 0 24px 60px rgba(0, 0, 0, 0.55));
+	padding: var(--space-6);
+	min-width: 380px;
+}
+
+dialog.correction::backdrop {
+	background-color: rgba(10, 11, 15, 0.72);
+}
+
+dialog.correction form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.rule-row {
+	padding: var(--space-2) var(--space-4);
+	border-bottom: var(--border-width) solid var(--color-border);
+	gap: var(--space-2);
+}
+
+.rule-form {
+	flex: 1;
+	gap: var(--space-2);
+	align-items: center;
+}
+
+.rule-form .input.num {
+	width: 90px;
+}
+
+.rule-form .provenance {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.page-head {
+	margin-bottom: var(--space-6);
+}
+
+.page-head h1 {
+	font-family: var(--font-display);
+	font-size: var(--text-headline-md-size);
+	font-weight: var(--text-headline-md-weight);
+	letter-spacing: var(--text-headline-md-tracking);
+	line-height: var(--text-headline-md-leading);
+	margin-top: var(--space-2);
+}
