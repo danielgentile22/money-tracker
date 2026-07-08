@@ -25,6 +25,5 @@ vite.config.ts.timestamp-*
 # Screenshots / scratch
 .playwright-mcp/
 *.png
-
-# internal issue tracker stays local
-.scratch/
+# README screenshots — sandbox data only, verified before commit
+!docs/images/*.png
