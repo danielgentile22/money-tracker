@@ -9,8 +9,9 @@ prompt, runs the loop, audits every tool payload, persists the messages, and ret
 the reply. Two hard bounds shape it:
 
 - **`MAX_TOOL_ITERATIONS = 6`** — one owner question can never turn into an unbounded
-  number of API calls. If the model is still asking for tools at the cap, the loop ends
-  and the model answers with what it has.
+  number of API calls. Each iteration is one model call that may request several tool
+  calls (all executed locally), so the bound is 6 model calls plus one final
+  "answer with what you have" call if the model is still asking for tools at the cap.
 - **`TXN_LIST_CAP = 40`** — a broad question can't ship the entire ledger in one tool
   payload.
 
@@ -31,8 +32,8 @@ detection:
 
 - Injected text can only influence what the model *says and queries next* — every tool
   is read-only over local engines, so there is no action to hijack.
-- The worst reachable outcome is bounded by the two caps and the egress contract: at
-  most 6 tool calls of owner-visible shapes, never identifiers, balances, or
+- The worst reachable outcome is bounded by the iteration cap and the egress contract:
+  a handful of tool payloads of owner-visible shapes, never identifiers, balances, or
   credentials (which no tool can access, let alone return).
 - No tool output is ever executed, rendered as HTML, or fed to another channel.
 

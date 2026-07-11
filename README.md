@@ -145,7 +145,7 @@ the bank's own statement.
   (pool + flex-classes) alongside per-category budgets. Living with both for a
   while made it obvious one model was carrying all the weight, so Flex was
   retired and "delete a category" was rearchitected to mean re-homing its
-  transactions, rules, and budget rows (`4fcba66`, ADR-0008).
+  transactions, rules, and budget rows (ADR-0008).
 - **One categorizer beats a chain of proposers.** The original design had a
   separate receipt-based category proposer feeding the main categorizer.
   Collapsing them into a single categorizer that consumes bank evidence plus
@@ -158,8 +158,8 @@ the bank's own statement.
 
 ## AI usage
 
-Most commits here carry a `Co-Authored-By: Claude` trailer: the code was
-written with Claude Code (Fable 5 / Opus 4.8) working from specs I wrote —
+The code was written with Claude Code (Fable 5 / Opus 4.8) working from specs
+I wrote —
 [`AGENTS.md`](AGENTS.md) is the spec I maintain for the agent, and `PLAN.md` /
 the PRDs locked scope before any code was generated. The agent did the
 implementation: the sync engine, the categorization ladder, the receipt
@@ -168,7 +168,7 @@ pipeline, and the test suite alongside them.
 The judgment calls stayed mine, and some went against the agent's output. The
 agent built Flex-mode budgets to spec in phase 2; I later reversed that
 decision and had it rip Flex out and rearchitect category deletion as
-re-homing (`4fcba66`). The proposer-chain design for receipts was collapsed
+re-homing (ADR-0008). The proposer-chain design for receipts was collapsed
 into a single categorizer (ADR-0007). And the `ponytail:` comments through the
 source are me capping scope on purpose — each one marks a simplification I
 chose, with its known ceiling, rather than complexity the agent wanted to add.

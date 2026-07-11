@@ -17,7 +17,10 @@ attributable_cents = round(amount_cents * matched_cost / total_cost)
 ```
 
 so float precision touches one multiplication and one division per period, then is
-rounded back into integer cents once.
+rounded back into integer cents once (a zero-usage period attributes 0 rather than
+dividing by zero). Downstream math — e.g. applying the partner's share percentage —
+starts from the integer `attributable_cents`, so its own rounding never compounds
+with this one.
 
 ## Considered options
 
@@ -37,9 +40,10 @@ Per period the only rounding is the final `Math.round`, so the attribution error
 most half a cent, and IEEE-754 double error on `amount_cents * matched / total` (values
 ≪ 2^53) is orders of magnitude below that. Errors do not compound: each period is
 computed from its own charge and its own usage window, never from a previous period's
-rounded output. Over N periods the worst-case total drift is N/2 cents — for a monthly
-subscription, under a dime a year — and the residual (charge minus attributable) is
-simply the un-attributed remainder of the charge, dropped by design.
+rounded output. If anyone ever sums attributions, the worst-case rounding error over
+N periods is N/2 cents — for a monthly subscription, under a dime a year. The residual
+(charge minus attributable) is simply the un-attributed remainder of the charge, kept
+by the owner by design rather than allocated anywhere.
 
 ## Consequences
 
