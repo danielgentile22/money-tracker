@@ -158,17 +158,31 @@ the bank's own statement.
 
 ## AI usage
 
-The code was written with Claude Code (Fable 5 / Opus 4.8) working from specs
-I wrote —
-[`AGENTS.md`](AGENTS.md) is the spec I maintain for the agent, and `PLAN.md` /
-the PRDs locked scope before any code was generated. The agent did the
-implementation: the sync engine, the categorization ladder, the receipt
-pipeline, and the test suite alongside them.
+This project was built with AI agents under my direction — Claude Code
+(Fable 5, Opus 4.8, Opus 4.7) and Codex (GPT-5.5). I want to be precise about
+where the machine ended and I began, because it's the opposite of where most
+people assume.
 
-The judgment calls stayed mine, and some went against the agent's output. The
-agent built Flex-mode budgets to spec in phase 2; I later reversed that
-decision and had it rip Flex out and rearchitect category deletion as
-re-homing (ADR-0008). The proposer-chain design for receipts was collapsed
-into a single categorizer (ADR-0007). And the `ponytail:` comments through the
-source are me capping scope on purpose — each one marks a simplification I
-chose, with its known ceiling, rather than complexity the agent wanted to add.
+**Where my time actually went was the front half.** Each phase started with
+extensive planning sessions with the agents to lock requirements, followed by
+working through the architectural decisions — and that's where most of my
+input and effort lived. The goal there was never to accept a plausible-looking
+answer: I pushed on every decision until it was one I understood and would
+defend, not AI slop I'd rubber-stamped. The [`docs/adr/`](docs/adr/) records
+are the output of that — each one is a decision I made, with the alternatives I
+weighed, not a summary the agent generated for me.
+
+**Then the back half was delegated.** Locked decisions became concrete PRDs,
+and the agents implemented them in slices — the sync engine, the
+categorization ladder, the receipt pipeline, and the test suite alongside
+them. [`AGENTS.md`](AGENTS.md) is the spec I maintain that keeps that
+implementation on the rails. Codex (GPT-5.5) did the heaviest lifting on code
+review, catching issues on each slice before a final manual PR review by me.
+
+Some decisions went against the agent's first output. The agent built
+Flex-mode budgets to spec in phase 2; I later reversed that and had it rip
+Flex out and rearchitect category deletion as re-homing (ADR-0008). The
+proposer-chain design for receipts was collapsed into a single categorizer
+(ADR-0007). And the `ponytail:` comments through the source are me capping
+scope on purpose — each marks a simplification I chose, with its known
+ceiling, rather than complexity the agent wanted to add.
