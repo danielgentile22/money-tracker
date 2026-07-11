@@ -1,5 +1,7 @@
 # Categories page absorbs Budgets and Cash Flow, month-first
 
+**Status:** accepted — amends ADR-0002 (surface layout) · **Date:** 2026-07-06
+
 The owner's primary loop is observing spending per Category and auditing miscategorized
 Transactions — spread today across Budgets, Cash Flow, Reports, and a category manager
 buried in Settings. We consolidated: one **Categories** page (`/categories`) carries the

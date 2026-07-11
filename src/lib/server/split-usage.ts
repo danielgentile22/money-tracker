@@ -6,11 +6,11 @@ import type { Database } from 'better-sqlite3';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-// This feature owns its schema instead of joining the migration chain: the
-// tables predate their would-be migration slot on existing databases, so a
-// positional entry would skew user_version. Idempotent; runs when the /splits
-// route module loads. Schema changes must be additive (new IF-NOT-EXISTS
-// statements), never ALTERs of these tables.
+// This feature owns its schema instead of joining the migration chain: these
+// idempotent statements run when the /splits route module loads, so a fresh
+// install creates the tables on first visit and all access stays behind this
+// route. Schema changes must be additive (new IF-NOT-EXISTS statements), never
+// ALTERs. Full rationale: docs/adr/0010-splits-schema-outside-migration-chain.md
 export function ensureSplitSchema(db: Database): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS split_charges (

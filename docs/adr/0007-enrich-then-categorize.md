@@ -1,6 +1,6 @@
 # Enrich then categorize: Receipt facts on the row, one categorizer
 
-**Status:** accepted — amends ADR-0006 and ADR-0001 (channel 2); retires the proposer (ADR-0005 third rung)
+**Status:** accepted — amends ADR-0006 and ADR-0001 (channel 2); retires the proposer (ADR-0005 third rung) · **Date:** 2026-07-05
 
 The Gmail scan used to end in a Review-queue Proposal, and the batched LLM rung never saw
 a Receipt even when one was matched. Receipt emails arrive days after the charge posts, so
@@ -20,6 +20,17 @@ The pipeline is now two independent layers, each covering every Transaction unif
   with the distinct source `llm+receipt`.
 
 The ladder: **Rule → Correction → LLM (`llm` / `llm+receipt`) → Plaid map → Other.**
+
+## Considered options
+
+- **Keep the proposer chain (Gmail scan → Proposal → review queue).** Rejected — Receipt
+  evidence arrived after the once-per-charge model call and changed nothing without a
+  hand-approved Proposal; the review queue became a second categorization UI.
+- **Feed the raw matched email to the batched categorizer.** Rejected — full email bodies
+  in every batch is worse egress and worse signal than distilled facts; and the facts
+  themselves are owner-visible value on the ledger, not just model fodder.
+- **Let the receipt run re-label anything, including Rules/Corrections.** Rejected — the
+  owner's word stays final; a re-run may only replace Plaid-map or model-rung assignments.
 
 ## Amendments
 

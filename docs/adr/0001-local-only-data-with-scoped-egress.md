@@ -1,6 +1,6 @@
 # Local-only data, with three deliberately-scoped egress channels
 
-**Status:** accepted
+**Status:** accepted · **Date:** 2026-07-04
 
 All account data lives on the owner's device (local SQLite, local web UI, no cloud
 server, no auth). The owner's hard constraint is zero risk of financial data leaking. We
@@ -21,6 +21,18 @@ explicit terms:
    matched Receipt snippet reaches Claude. Email-derived Categories land in a review queue
    as Proposals and never auto-apply — fuzzy matching must not silently corrupt Categories
    or Projections.
+
+## Considered options
+
+- **Truly zero egress: manual CSV/OFX import, no cloud LLM, no Gmail.** Rejected — the
+  owner wants automatic sync across all accounts, and hand-importing a dozen accounts
+  monthly is the failure mode that kills personal finance tools.
+- **Local-only models for the insight layer.** Rejected as too weak for the insight
+  quality wanted; the compromise is that only an anonymized digest crosses the wire.
+- **A session-bound MCP agent for email lookup instead of app-owned OAuth.** Rejected
+  because multiple Gmail Inboxes need standing enrollment, not per-session grants.
+- **More channels later (webhooks, cloud backup, mobile sync).** Explicitly out: the
+  contract is *exactly three*, and any fourth channel requires superseding this ADR.
 
 ## Consequences
 

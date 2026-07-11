@@ -1,6 +1,6 @@
 # Local web app, TypeScript full-stack (SvelteKit), native shell deferred
 
-**Status:** accepted
+**Status:** accepted · **Date:** 2026-07-04
 
 Single owner, one machine, local-only (see ADR-0001). The app is graph-heavy, so it needs a
 web frontend regardless; putting the backend in the same language avoids a two-toolchain
