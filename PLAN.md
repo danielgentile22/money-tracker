@@ -174,7 +174,7 @@ CSV · scheduled background sync (launchd) · phone/LAN access · light mode.
 
 ## Build plan — 3 phases, each ends usable
 
-All three built (tracker: `.scratch/`). Phase 1 owner-accepted 2026-07-04 (p1-11);
+All three built (tracked on GitHub Issues). Phase 1 owner-accepted 2026-07-04 (p1-11);
 Phase 2 built, owner acceptance open (p2-13); Phase 3 built, cloud go-live gate open
 (p3-07 — the only step that needs the outstanding credentials).
 

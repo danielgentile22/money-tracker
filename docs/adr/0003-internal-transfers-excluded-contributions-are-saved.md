@@ -1,6 +1,6 @@
 # Internal transfers excluded from spending/income; contributions count as saved
 
-**Status:** accepted
+**Status:** accepted · **Date:** 2026-07-04
 
 With accounts across multiple institutions and account types, money constantly moves *between the owner's own
 accounts*: checking→savings, credit-card payments, and savings/investment/529 contributions.

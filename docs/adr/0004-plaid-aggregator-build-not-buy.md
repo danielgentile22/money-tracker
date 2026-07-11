@@ -1,6 +1,6 @@
 # Plaid as the data aggregator; build, don't buy
 
-**Status:** accepted
+**Status:** accepted · **Date:** 2026-07-04
 
 The owner wants to build and own a private, local app (see ADR-0001), pulling all accounts
 across depository/credit (credit card, debit, checking, savings) and investment (brokerage +

@@ -1,6 +1,6 @@
 # Categorization: Plaid category + rules table, no custom ML classifier
 
-**Status:** superseded by ADR-0006
+**Status:** superseded by ADR-0006 · **Date:** 2026-07-04
 
 The obvious path for "learn my categories from my corrections" is a trained ML classifier. We
 deliberately reject that in favor of a deterministic ladder: **Plaid category → Rules table →

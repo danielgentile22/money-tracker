@@ -13,9 +13,9 @@ Local-first personal finance tracker. Read `PLAN.md` for the locked plan,
 Per-repo configuration for the engineering skills (to-issues, to-prd, triage,
 diagnose, tdd, improve-codebase-architecture, zoom-out):
 
-- **Issue tracker**: local markdown under `.scratch/` — see [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md)
-- **Triage labels**: canonical names, no overrides — see [docs/agents/triage-labels.md](docs/agents/triage-labels.md)
-- **Domain docs**: single-context (`CONTEXT.md` + `docs/adr/`) — see [docs/agents/domain.md](docs/agents/domain.md)
+- **Issue tracker**: GitHub Issues (`danielgentile22/money-tracker`) via `gh`; external PRs not triaged — see [.claude/agents-config/issue-tracker.md](.claude/agents-config/issue-tracker.md)
+- **Triage labels**: canonical names, no overrides — see [.claude/agents-config/triage-labels.md](.claude/agents-config/triage-labels.md)
+- **Domain docs**: single-context (`CONTEXT.md` + `docs/adr/`) — see [.claude/agents-config/domain.md](.claude/agents-config/domain.md)
 
 ## Dev facts (as-built; learned the hard way across three build sessions)
 

@@ -2,8 +2,7 @@ import type { Cadence } from './recurring';
 
 // Read-time view over recurring_series rows: derived state (upcoming/late/ended),
 // next expected date, monthlyized amounts, and the committed-monthly headline.
-// Nothing here is stored — state is arithmetic over last_seen vs today (PRD:
-// .scratch/recurring-page).
+// Nothing here is stored — state is arithmetic over last_seen vs today.
 
 export type SeriesRow = {
 	id: number;
