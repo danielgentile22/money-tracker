@@ -89,6 +89,15 @@ security add-generic-password -s money-tracker -a plaid-secret-{data.plaidEnv} -
 							<span class="t-body-sm t-muted" style="margin-left: var(--space-2);">
 								{account.subtype ?? account.type}{account.mask ? ` ····${account.mask}` : ''}
 							</span>
+							{#if account.active === 0}
+								<span
+									class="chip"
+									data-tone="warning"
+									style="margin-left: var(--space-2);"
+									title="Plaid stopped reporting this account (closed or deselected). Its balance is frozen out of net worth."
+									>inactive</span
+								>
+							{/if}
 						</span>
 						<span class="t-mono-sm">{fmtUSD(account.current_balance_cents)}</span>
 					</li>

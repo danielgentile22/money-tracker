@@ -141,3 +141,50 @@ test('net worth sums Accounts per date: forward-fill, negative liabilities, esti
 		{ date: '2026-07-04', balance_cents: 280_000, estimated: 0 }
 	]);
 });
+
+test('recordSnapshots skips inactive accounts (p9-00)', () => {
+	const db = makeDb();
+	const live = addAccount(db, 'a1', 'depository', 100_000);
+	const dead = addAccount(db, 'a2', 'depository', 50_000);
+	db.prepare('UPDATE accounts SET active = 0 WHERE id = ?').run(dead);
+
+	recordSnapshots(db, '2026-07-04');
+
+	expect(balanceSeries(db, live)).toHaveLength(1);
+	expect(balanceSeries(db, dead)).toHaveLength(0);
+});
+
+test('recordSnapshots only snapshots the given connections (p9-09)', () => {
+	const db = makeDb();
+	db.prepare("INSERT INTO connections (institution_name, plaid_item_id) VALUES ('B2', 'i2')").run();
+	const onConn1 = addAccount(db, 'a1', 'depository', 100_000); // connection 1
+	const onConn2 = db
+		.prepare(
+			`INSERT INTO accounts (connection_id, plaid_account_id, name, type, current_balance_cents)
+			 VALUES (2, 'a2', 'a2', 'depository', 50_000) RETURNING id`
+		)
+		.pluck()
+		.get() as number;
+
+	recordSnapshots(db, '2026-07-04', [1]); // only connection 1 synced this run
+
+	expect(balanceSeries(db, onConn1)).toHaveLength(1);
+	expect(balanceSeries(db, onConn2)).toHaveLength(0);
+});
+
+test('an inactive account stops feeding net worth after its final snapshot (p9-00)', () => {
+	const db = makeDb();
+	const live = addAccount(db, 'a1', 'depository', 100_000);
+	const dead = addAccount(db, 'a2', 'depository', 40_000);
+	recordSnapshots(db, '2026-07-01'); // day 1: both real
+
+	// the dead account is dropped from Plaid; the live one syncs again on day 2
+	db.prepare('UPDATE accounts SET active = 0 WHERE id = ?').run(dead);
+	db.prepare('UPDATE accounts SET current_balance_cents = 110_000 WHERE id = ?').run(live);
+	recordSnapshots(db, '2026-07-02'); // dead is skipped (inactive)
+
+	expect(netWorthSeries(db)).toEqual([
+		{ date: '2026-07-01', balance_cents: 140_000, estimated: 0 }, // both still count on day 1
+		{ date: '2026-07-02', balance_cents: 110_000, estimated: 0 } // dead no longer carried forward
+	]);
+});

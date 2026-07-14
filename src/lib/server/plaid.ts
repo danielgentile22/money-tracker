@@ -1,14 +1,8 @@
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
-import type { Transaction } from 'plaid';
 import { getSecret, setSecret, deleteSecret } from './keychain';
 import { db } from './db';
-import {
-	upsertAccounts,
-	ownerSignedBalance,
-	type PlaidSource,
-	type SourceTxn,
-	type SourceInvestmentTxn
-} from './sync';
+import { upsertAccounts, type PlaidSource, type SourceInvestmentTxn } from './sync';
+import { mapAccount, mapTransaction, mapInvestmentTxn } from './plaid-map';
 
 // sandbox | production — flipped at p1-11 cutover. Secrets differ per env.
 export const PLAID_ENV = process.env.PLAID_ENV ?? 'sandbox';
@@ -97,15 +91,7 @@ export async function exchangePublicToken(
 export const realSource: PlaidSource = {
 	async accounts(plaidItemId) {
 		const res = await client().accountsBalanceGet({ access_token: accessTokenFor(plaidItemId) });
-		return res.data.accounts.map((a) => ({
-			account_id: a.account_id,
-			name: a.name,
-			type: a.type,
-			subtype: a.subtype ?? null,
-			mask: a.mask ?? null,
-			current_balance_cents: ownerSignedBalance(a.type, toCents(a.balances.current)),
-			available_balance_cents: ownerSignedBalance(a.type, toCents(a.balances.available))
-		}));
+		return res.data.accounts.map(mapAccount);
 	},
 	async transactionsSync(plaidItemId, cursor) {
 		const res = await client().transactionsSync({
@@ -113,23 +99,9 @@ export const realSource: PlaidSource = {
 			cursor: cursor ?? undefined,
 			count: 500
 		});
-		const map = (t: Transaction): SourceTxn => ({
-			transaction_id: t.transaction_id,
-			pending_transaction_id: t.pending_transaction_id ?? null,
-			account_id: t.account_id,
-			date: t.date,
-			name: t.name,
-			merchant_name: t.merchant_name ?? null,
-			amount_cents: -(toCents(t.amount) ?? 0),
-			pending: t.pending,
-			pfc_primary: t.personal_finance_category?.primary ?? null,
-			pfc_detailed: t.personal_finance_category?.detailed ?? null,
-			pfc_confidence: t.personal_finance_category?.confidence_level ?? null,
-			payment_channel: t.payment_channel ?? null
-		});
 		return {
-			added: res.data.added.map(map),
-			modified: res.data.modified.map(map),
+			added: res.data.added.map(mapTransaction),
+			modified: res.data.modified.map(mapTransaction),
 			removed: res.data.removed.map((r) => ({ transaction_id: r.transaction_id! })),
 			next_cursor: res.data.next_cursor,
 			has_more: res.data.has_more
@@ -148,23 +120,12 @@ export const realSource: PlaidSource = {
 				end_date,
 				options: { count: 500, offset }
 			});
-			for (const t of res.data.investment_transactions) {
-				// external = cash actually crossing the account boundary
-				const external =
-					t.type === 'transfer' ||
-					(t.type === 'cash' &&
-						['contribution', 'deposit', 'withdrawal'].includes(t.subtype ?? ''));
-				out.push({
-					investment_transaction_id: t.investment_transaction_id,
-					account_id: t.account_id,
-					date: t.date,
-					name: t.name,
-					amount_cents: -(toCents(t.amount) ?? 0),
-					internal: !external
-				});
-			}
-			offset += res.data.investment_transactions.length;
-			if (offset >= res.data.total_investment_transactions) break;
+			const batch = res.data.investment_transactions;
+			for (const t of batch) out.push(mapInvestmentTxn(t));
+			offset += batch.length;
+			// p9-77: stop on an empty page even if total still exceeds offset —
+			// a mid-pagination total/page mismatch would otherwise loop forever.
+			if (batch.length === 0 || offset >= res.data.total_investment_transactions) break;
 		}
 		return out;
 	}
@@ -200,12 +161,9 @@ export async function removeConnection(connectionId: number): Promise<void> {
 export async function refreshAccounts(connectionId: number): Promise<void> {
 	const row = db
 		.prepare('SELECT plaid_item_id FROM connections WHERE id = ?')
-		.get(connectionId) as { plaid_item_id: string };
+		.get(connectionId) as { plaid_item_id: string } | undefined;
+	if (!row) throw new Error(`No Connection ${connectionId}`);
 	upsertAccounts(db, connectionId, await realSource.accounts(row.plaid_item_id));
-}
-
-export function toCents(amount: number | null | undefined): number | null {
-	return amount == null ? null : Math.round(amount * 100);
 }
 
 export function setConnectionHealth(

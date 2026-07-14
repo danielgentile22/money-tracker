@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { migrate } from './db/migrate';
-import { syncConnection } from './sync';
+import { syncConnection, upsertAccounts } from './sync';
 import type { PlaidSource, SourceTxn, SyncPage, SourceAccount } from './sync';
 
 const CHECKING: SourceAccount = {
@@ -193,6 +193,127 @@ test('newTxnIds reports only this sync\'s inserts — the LLM rung\'s batch', as
 		1
 	);
 	expect(second.newTxnIds).toHaveLength(1); // the modified row is not new
+});
+
+test('a Correction on a pending row survives the charge posting (p9-01)', async () => {
+	const db = makeDb();
+	await syncConnection(db, fakeSource([page({ added: [txn('t-pending', { pending: true })] })]), 1);
+	const groceries = db.prepare("SELECT id FROM categories WHERE name = 'Groceries'").pluck().get();
+	db.prepare(
+		"UPDATE transactions SET category_id = ?, category_source = 'correction', unresolved = 0 WHERE plaid_transaction_id = 't-pending'"
+	).run(groceries);
+
+	await syncConnection(
+		db,
+		fakeSource([page({ added: [txn('t-posted', { pending_transaction_id: 't-pending' })] })]),
+		1
+	);
+
+	const row = db
+		.prepare(
+			'SELECT plaid_transaction_id AS pid, category_id, category_source, pending FROM transactions'
+		)
+		.get();
+	expect(row).toEqual({
+		pid: 't-posted',
+		category_id: groceries,
+		category_source: 'correction',
+		pending: 0
+	});
+});
+
+test('Tags on a pending row survive the charge posting (p9-01)', async () => {
+	const db = makeDb();
+	await syncConnection(db, fakeSource([page({ added: [txn('t-pending', { pending: true })] })]), 1);
+	const txnId = db
+		.prepare("SELECT id FROM transactions WHERE plaid_transaction_id = 't-pending'")
+		.pluck()
+		.get();
+	db.prepare("INSERT INTO tags (name) VALUES ('reimbursable')").run();
+	const tagId = db.prepare("SELECT id FROM tags WHERE name = 'reimbursable'").pluck().get();
+	db.prepare('INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)').run(txnId, tagId);
+
+	await syncConnection(
+		db,
+		fakeSource([page({ added: [txn('t-posted', { pending_transaction_id: 't-pending' })] })]),
+		1
+	);
+
+	const postedId = db
+		.prepare("SELECT id FROM transactions WHERE plaid_transaction_id = 't-posted'")
+		.pluck()
+		.get();
+	expect(
+		db.prepare('SELECT tag_id FROM transaction_tags WHERE transaction_id = ?').pluck().all(postedId)
+	).toEqual([tagId]);
+});
+
+test('Receipt match state on a pending row survives the charge posting (p9-01)', async () => {
+	const db = makeDb();
+	await syncConnection(db, fakeSource([page({ added: [txn('t-pending', { pending: true })] })]), 1);
+	db.prepare(
+		"UPDATE transactions SET receipt_search_state = 'matched', receipt_json = '{\"x\":1}' WHERE plaid_transaction_id = 't-pending'"
+	).run();
+
+	await syncConnection(
+		db,
+		fakeSource([page({ added: [txn('t-posted', { pending_transaction_id: 't-pending' })] })]),
+		1
+	);
+
+	expect(
+		db
+			.prepare(
+				"SELECT receipt_search_state AS s, receipt_json AS j FROM transactions WHERE plaid_transaction_id = 't-posted'"
+			)
+			.get()
+	).toEqual({ s: 'matched', j: '{"x":1}' });
+});
+
+const acct = (id: string, over: Partial<SourceAccount> = {}): SourceAccount => ({
+	account_id: id,
+	name: id,
+	type: 'depository',
+	subtype: 'checking',
+	mask: null,
+	current_balance_cents: 100_000,
+	available_balance_cents: 100_000,
+	...over
+});
+
+const activeMap = (db: Database.Database) =>
+	Object.fromEntries(
+		(
+			db.prepare('SELECT plaid_account_id AS pid, active FROM accounts').all() as {
+				pid: string;
+				active: number;
+			}[]
+		).map((r) => [r.pid, r.active])
+	);
+
+test('an account Plaid stops returning is marked inactive; a returning one reactivates (p9-00)', () => {
+	const db = makeDb();
+	upsertAccounts(db, 1, [acct('a'), acct('b')]);
+	expect(activeMap(db)).toEqual({ a: 1, b: 1 });
+
+	upsertAccounts(db, 1, [acct('a')]); // b vanished from the Plaid item
+	expect(activeMap(db)).toEqual({ a: 1, b: 0 });
+
+	upsertAccounts(db, 1, [acct('a'), acct('b')]); // b comes back
+	expect(activeMap(db)).toEqual({ a: 1, b: 1 });
+});
+
+test('an empty account pull marks all the connection\'s accounts inactive (p9-00)', () => {
+	const db = makeDb();
+	upsertAccounts(db, 1, [acct('a'), acct('b')]);
+	// Plaid returns no accounts: they must go inactive so the runner does not
+	// re-snapshot their now-stale balances as fresh 'real' points.
+	upsertAccounts(db, 1, []);
+	expect(activeMap(db)).toEqual({ a: 0, b: 0 });
+
+	// they reactivate once Plaid lists them again
+	upsertAccounts(db, 1, [acct('a'), acct('b')]);
+	expect(activeMap(db)).toEqual({ a: 1, b: 1 });
 });
 
 test('a modified event never wipes an LLM assignment back to the Plaid map', async () => {
