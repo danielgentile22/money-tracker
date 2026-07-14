@@ -78,12 +78,12 @@ export function upsertAccounts(
 	accounts: SourceAccount[]
 ): void {
 	const upsert = db.prepare(
-		`INSERT INTO accounts (connection_id, plaid_account_id, name, type, subtype, mask, current_balance_cents, available_balance_cents)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO accounts (connection_id, plaid_account_id, name, type, subtype, mask, current_balance_cents, available_balance_cents, active)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
 		 ON CONFLICT (plaid_account_id) DO UPDATE SET
 		   name = excluded.name, type = excluded.type, subtype = excluded.subtype, mask = excluded.mask,
 		   current_balance_cents = excluded.current_balance_cents,
-		   available_balance_cents = excluded.available_balance_cents`
+		   available_balance_cents = excluded.available_balance_cents, active = 1`
 	);
 	for (const a of accounts) {
 		upsert.run(
@@ -97,6 +97,15 @@ export function upsertAccounts(
 			a.available_balance_cents
 		);
 	}
+	// p9-00: any account Plaid no longer returns for this connection is closed or
+	// deselected — mark it inactive so recordSnapshots/netWorthSeries stop feeding
+	// it (and its now-stale balance) into net worth. An empty pull inactivates all
+	// of them: keeping them active would let the runner re-snapshot stale balances
+	// as fresh 'real' points (Plaid signals real failures by throwing, not by
+	// returning []). They reactivate on the next sync that lists them.
+	const ids = accounts.map((a) => a.account_id);
+	const clause = ids.length > 0 ? ` AND plaid_account_id NOT IN (${ids.map(() => '?').join(',')})` : '';
+	db.prepare(`UPDATE accounts SET active = 0 WHERE connection_id = ?${clause}`).run(connectionId, ...ids);
 }
 
 /**
@@ -181,12 +190,22 @@ export async function syncConnection(
 			);
 			const deleteTxn = db.prepare('DELETE FROM transactions WHERE plaid_transaction_id = ?');
 			const existsTxn = db.prepare('SELECT 1 FROM transactions WHERE plaid_transaction_id = ?');
+			const renamePending = db.prepare(
+				'UPDATE transactions SET plaid_transaction_id = ? WHERE plaid_transaction_id = ?'
+			);
 			for (const page of pages) {
 				for (const t of [...page.added, ...page.modified]) {
 					const accountId = accountIds.get(t.account_id);
 					if (!accountId) throw new Error(`transaction for unknown account ${t.account_id}`);
-					// a posted transaction replaces the pending row it supersedes
-					if (t.pending_transaction_id) deleteTxn.run(t.pending_transaction_id);
+					// a posted transaction supersedes its pending row: rename that row in
+					// place to the posted id (p9-01) instead of delete+reinsert, so the
+					// owner's Correction, Tags, and Receipt state carry over — the upsert
+					// below then runs as an ON CONFLICT UPDATE and its category CASE keeps
+					// owner-set sources. ponytail: a Plaid replay where the posted id
+					// already exists would hit the UNIQUE constraint and abort the sync
+					// (cursor unadvanced, retryable) — no silent corruption.
+					if (t.pending_transaction_id)
+						renamePending.run(t.transaction_id, t.pending_transaction_id);
 					const merchant = normalizeMerchant(t.name, t.merchant_name);
 					const facts = {
 						merchant,

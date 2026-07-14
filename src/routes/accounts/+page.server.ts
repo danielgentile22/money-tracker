@@ -19,6 +19,7 @@ export type AccountRow = {
 	subtype: string | null;
 	mask: string | null;
 	current_balance_cents: number | null;
+	active: number; // 0 = Plaid stopped reporting it (closed/deselected); frozen out of net worth
 };
 
 export const load: PageServerLoad = () => {
@@ -29,7 +30,7 @@ export const load: PageServerLoad = () => {
 		.all() as ConnectionRow[];
 	const accounts = db
 		.prepare(
-			'SELECT id, connection_id, name, type, subtype, mask, current_balance_cents FROM accounts ORDER BY id'
+			'SELECT id, connection_id, name, type, subtype, mask, current_balance_cents, active FROM accounts ORDER BY id'
 		)
 		.all() as AccountRow[];
 	const series: Record<number, SeriesPoint[]> = {};

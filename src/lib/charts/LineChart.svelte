@@ -1,6 +1,7 @@
 <script lang="ts">
 	import * as Plot from '@observablehq/plot';
 	import { INDIGO, AMBER, fmtTick } from './theme';
+	import { segmentByEstimated } from './segments';
 
 	type Point = { date: string; value_cents: number; estimated?: number };
 
@@ -29,10 +30,19 @@
 			value: p.value_cents / 100,
 			estimated: p.estimated === 1
 		}));
-		// estimated segment includes the first real point so the line stays continuous
-		const firstReal = data.find((d) => !d.estimated);
-		const est = data.filter((d) => d.estimated).concat(firstReal ? [firstReal] : []);
-		const real = data.filter((d) => !d.estimated);
+		// one line mark per contiguous run; estimated runs draw dashed and reach
+		// into their real neighbors so the line stays continuous at any interleaving
+		const lines = segmentByEstimated(data)
+			.filter((run) => run.points.length > 1)
+			.map((run) =>
+				Plot.lineY(run.points, {
+					x: 'date',
+					y: 'value',
+					stroke: color,
+					strokeWidth: run.estimated ? 1.5 : 2,
+					...(run.estimated ? { strokeDasharray: '4 4', strokeOpacity: 0.55 } : {})
+				})
+			);
 
 		const plot = Plot.plot({
 			width: el.clientWidth || 640,
@@ -45,19 +55,7 @@
 				target != null
 					? Plot.ruleY([target / 100], { stroke: AMBER, strokeDasharray: '2 4', strokeOpacity: 0.8 })
 					: null,
-				est.length > 1
-					? Plot.lineY(est, {
-							x: 'date',
-							y: 'value',
-							stroke: color,
-							strokeWidth: 1.5,
-							strokeDasharray: '4 4',
-							strokeOpacity: 0.55
-						})
-					: null,
-				real.length > 1
-					? Plot.lineY(real, { x: 'date', y: 'value', stroke: color, strokeWidth: 2 })
-					: null,
+				...lines,
 				Plot.tip(
 					data,
 					Plot.pointerX({

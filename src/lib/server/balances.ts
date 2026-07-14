@@ -9,11 +9,28 @@ export function localToday(): string {
 	return new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, local tz
 }
 
-/** One real Snapshot per Account per sync; same-day re-sync updates in place. */
-export function recordSnapshots(db: Database, date = localToday()): void {
+/**
+ * One real Snapshot per Account per sync; same-day re-sync updates in place.
+ * Inactive accounts are skipped (p9-00: no fresh 'real' points for dead
+ * accounts). When connectionIds is given, only those connections' accounts are
+ * snapshotted — the sync runner passes the connections that actually synced, so
+ * a broken connection's stale balances aren't stamped as fresh (p9-09).
+ */
+export function recordSnapshots(
+	db: Database,
+	date = localToday(),
+	connectionIds?: number[]
+): void {
+	if (connectionIds?.length === 0) return;
+	const scope = connectionIds
+		? ` AND connection_id IN (${connectionIds.map(() => '?').join(',')})`
+		: '';
 	const accounts = db
-		.prepare('SELECT id, current_balance_cents FROM accounts WHERE current_balance_cents IS NOT NULL')
-		.all() as { id: number; current_balance_cents: number }[];
+		.prepare(
+			`SELECT id, current_balance_cents FROM accounts
+			 WHERE current_balance_cents IS NOT NULL AND active = 1${scope}`
+		)
+		.all(...(connectionIds ?? [])) as { id: number; current_balance_cents: number }[];
 	const upsert = db.prepare(
 		`INSERT INTO snapshots (account_id, date, balance_cents, estimated) VALUES (?, ?, ?, 0)
 		 ON CONFLICT (account_id, date) DO UPDATE SET balance_cents = excluded.balance_cents, estimated = 0`
@@ -91,6 +108,20 @@ export function netWorthSeries(db: Database, accountIds?: number[]): SeriesPoint
 	const rows = db
 		.prepare(`SELECT account_id, date, balance_cents, estimated FROM snapshots${scope} ORDER BY date`)
 		.all(...(accountIds ?? [])) as (SeriesPoint & { account_id: number })[];
+	// p9-00: keep an inactive account's history but stop carrying its (now dead)
+	// balance forward past its final snapshot — otherwise net worth stays
+	// inflated by a closed account's residual on every later date.
+	// ponytail: this reads the *current* active flag, so a vanish-then-return
+	// account reappears in the gap dates and its final same-day snapshot still
+	// counts today — honest historical intervals would need persisted
+	// deactivation boundaries, not worth it until an account actually flaps.
+	const inactive = new Set(
+		(db.prepare('SELECT id FROM accounts WHERE active = 0').all() as { id: number }[]).map(
+			(r) => r.id
+		)
+	);
+	const finalDate = new Map<number, string>();
+	for (const r of rows) finalDate.set(r.account_id, r.date); // rows are date-ordered
 	const last = new Map<number, { balance_cents: number; estimated: number }>();
 	const out: SeriesPoint[] = [];
 	for (let i = 0; i < rows.length; i++) {
@@ -98,7 +129,8 @@ export function netWorthSeries(db: Database, accountIds?: number[]): SeriesPoint
 		if (i + 1 < rows.length && rows[i + 1].date === rows[i].date) continue; // date not finished
 		let sum = 0;
 		let estimated = 0;
-		for (const b of last.values()) {
+		for (const [id, b] of last) {
+			if (inactive.has(id) && rows[i].date > finalDate.get(id)!) continue;
 			sum += b.balance_cents;
 			estimated ||= b.estimated;
 		}
