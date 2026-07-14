@@ -1,3 +1,4 @@
+import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import {
 	approveReviewItem,
@@ -49,6 +50,10 @@ export const load: PageServerLoad = () => {
 			return {
 				id: item.id,
 				kind: item.kind,
+				// lone-leg (offer the one-sided buttons) is a property of the payload,
+				// not of how many candidate rows survive — a pair item whose candidates
+				// were all sync-deleted is not a lone leg and must not get those buttons.
+				isLoneLeg: p.candidateIds.length === 0,
 				txn: txnById.get(p.txnId) as TxnEvidence | undefined,
 				candidates: p.candidateIds
 					.map((c) => txnById.get(c) as TxnEvidence | undefined)
@@ -59,25 +64,33 @@ export const load: PageServerLoad = () => {
 	};
 };
 
+// Plain-form POSTs with keyboard advance make double-submit the normal case (a
+// double Enter, a stale second tab): a stale/deleted id must fail gracefully,
+// not 500 the review flow. Mirrors settings' act() helper.
+function act(fn: () => void) {
+	try {
+		fn();
+		return { ok: true };
+	} catch (e) {
+		return fail(400, { message: e instanceof Error ? e.message : String(e) });
+	}
+}
+
 export const actions: Actions = {
 	approve: async ({ request }) => {
 		const f = await request.formData();
-		approveReviewItem(db, Number(f.get('id')), Number(f.get('candidate_id')));
-		return { ok: true };
+		return act(() => approveReviewItem(db, Number(f.get('id')), Number(f.get('candidate_id'))));
 	},
 	approveLone: async ({ request }) => {
 		const f = await request.formData();
-		approveLoneLeg(db, Number(f.get('id')), f.get('saved') === '1');
-		return { ok: true };
+		return act(() => approveLoneLeg(db, Number(f.get('id')), f.get('saved') === '1'));
 	},
 	reject: async ({ request }) => {
 		const f = await request.formData();
-		rejectReviewItem(db, Number(f.get('id')));
-		return { ok: true };
+		return act(() => rejectReviewItem(db, Number(f.get('id'))));
 	},
 	reopen: async ({ request }) => {
 		const f = await request.formData();
-		reopenReviewItem(db, Number(f.get('id')));
-		return { ok: true };
+		return act(() => reopenReviewItem(db, Number(f.get('id'))));
 	}
 };

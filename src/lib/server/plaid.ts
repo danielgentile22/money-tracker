@@ -148,6 +148,15 @@ export async function removeConnection(connectionId: number): Promise<void> {
 	}
 	deleteSecret(`plaid-access-token-${row.plaid_item_id}`);
 	db.transaction(() => {
+		// a paired leg in another Connection points at these transactions via
+		// transfer_peer_id (NO ACTION) — null it out before the cascade delete,
+		// or the FK aborts removal. The surviving leg re-enters detection.
+		db.prepare(
+			`UPDATE transactions SET transfer_peer_id = NULL, is_transfer = 0, is_saved = 0
+			 WHERE transfer_peer_id IN (
+			   SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+			   WHERE a.connection_id = ?)`
+		).run(connectionId);
 		db.prepare('DELETE FROM connections WHERE id = ?').run(connectionId);
 		// review items whose Transaction just cascaded away
 		db.prepare(

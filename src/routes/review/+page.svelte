@@ -80,7 +80,7 @@
 			>
 				<div class="row" style="gap: var(--space-2); margin-bottom: var(--space-3);">
 					<span class="chip" data-tone="info">Transfer?</span>
-					{#if item.candidates.length === 0}
+					{#if item.isLoneLeg}
 						<span class="t-body-sm t-muted">Plaid flagged this leg; no partner found</span>
 					{:else if item.candidates.length > 1}
 						<span class="t-body-sm t-muted">{item.candidates.length} possible partners</span>
@@ -123,7 +123,7 @@
 				{/each}
 
 				<div class="row" style="justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-3);">
-					{#if item.candidates.length === 0}
+					{#if item.isLoneLeg}
 						<!-- one-sided Transfer: the partner leg is at an institution that
 						     sends no transactions (e.g. the 529s) -->
 						<form method="POST" action="?/approveLone">

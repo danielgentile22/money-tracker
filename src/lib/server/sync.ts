@@ -188,6 +188,13 @@ export async function syncConnection(
 				   unresolved = CASE WHEN transactions.category_source IN ('correction', 'proposal')
 				     THEN 0 ELSE excluded.unresolved END`
 			);
+			// A paired transaction has an inbound transfer_peer_id FK (NO ACTION), so
+			// deleting it would abort the sync — null out the surviving leg's pointer
+			// first and reset its flags so detection re-judges the now-orphaned leg.
+			const clearPeer = db.prepare(
+				`UPDATE transactions SET transfer_peer_id = NULL, is_transfer = 0, is_saved = 0
+				 WHERE transfer_peer_id = (SELECT id FROM transactions WHERE plaid_transaction_id = ?)`
+			);
 			const deleteTxn = db.prepare('DELETE FROM transactions WHERE plaid_transaction_id = ?');
 			const existsTxn = db.prepare('SELECT 1 FROM transactions WHERE plaid_transaction_id = ?');
 			const renamePending = db.prepare(
@@ -239,8 +246,17 @@ export async function syncConnection(
 					);
 					if (isNew) newTxnIds.push(Number(info.lastInsertRowid));
 				}
-				for (const r of page.removed) deleteTxn.run(r.transaction_id);
+				for (const r of page.removed) {
+					clearPeer.run(r.transaction_id);
+					deleteTxn.run(r.transaction_id);
+				}
 			}
+			// Drop open transfer-ambiguity items whose subject transaction just
+			// vanished, so the review queue never renders (or 500s on) a dead id.
+			db.prepare(
+				`DELETE FROM review_items WHERE kind = 'transfer-ambiguity' AND status = 'open'
+				 AND json_extract(payload, '$.txnId') NOT IN (SELECT id FROM transactions)`
+			).run();
 			applyRuleTags(db); // Rules with Tags label arrivals just like they categorize them
 			// investment activity: internal rows are invisible (no ladder, no
 			// Unresolved, no Transfer pairing); external legs (contributions,
