@@ -87,6 +87,45 @@ test('first sync inserts added transactions and persists the cursor', async () =
 	expect(connection(db).last_synced_at).not.toBeNull();
 });
 
+test('removing a paired leg nulls its peer and purges its review item, no FK wedge (#02/#38)', async () => {
+	const db = makeDb();
+	const SAVINGS: SourceAccount = {
+		...CHECKING,
+		account_id: 'acc-savings',
+		name: 'Savings',
+		subtype: 'savings'
+	};
+	// seed both accounts + a confirmed cross-account transfer pair by hand
+	const acct = db.prepare(
+		'INSERT INTO accounts (connection_id, plaid_account_id, name, type, subtype) VALUES (1, ?, ?, ?, ?)'
+	);
+	const chk = acct.run('acc-checking', 'Checking', 'depository', 'checking').lastInsertRowid as number;
+	const sav = acct.run('acc-savings', 'Savings', 'depository', 'savings').lastInsertRowid as number;
+	const ins = db.prepare(
+		"INSERT INTO transactions (account_id, plaid_transaction_id, date, name, amount_cents) VALUES (?, ?, '2026-06-01', 'X', ?) RETURNING id"
+	);
+	const outId = ins.pluck().get(chk, 't-out', -50_000) as number;
+	const inId = ins.pluck().get(sav, 't-in', 50_000) as number;
+	db.prepare('UPDATE transactions SET is_transfer = 1, is_saved = 1, transfer_peer_id = ? WHERE id = ?').run(inId, outId);
+	db.prepare('UPDATE transactions SET is_transfer = 1, is_saved = 1, transfer_peer_id = ? WHERE id = ?').run(outId, inId);
+	db.prepare("INSERT INTO review_items (kind, payload) VALUES ('transfer-ambiguity', ?)").run(
+		JSON.stringify({ txnId: outId, candidateIds: [] })
+	);
+
+	const source: PlaidSource = {
+		accounts: async () => [CHECKING, SAVINGS],
+		transactionsSync: async () => page({ removed: [{ transaction_id: 't-out' }] })
+	};
+	const result = await syncConnection(db, source, 1);
+
+	expect(result.ok).toBe(true); // the FK did not abort the sync
+	expect(db.prepare("SELECT COUNT(*) FROM transactions WHERE plaid_transaction_id = 't-out'").pluck().get()).toBe(0);
+	expect(
+		db.prepare('SELECT is_transfer, is_saved, transfer_peer_id FROM transactions WHERE id = ?').get(inId)
+	).toEqual({ is_transfer: 0, is_saved: 0, transfer_peer_id: null });
+	expect(db.prepare('SELECT COUNT(*) FROM review_items').pluck().get()).toBe(0);
+});
+
 test('second sync starts from the persisted cursor', async () => {
 	const db = makeDb();
 	await syncConnection(db, fakeSource([page({ added: [txn('t-1')], next_cursor: 'c-1' })]), 1);

@@ -4,6 +4,7 @@ import { migrate } from './db/migrate';
 import { detectTransfers, isAssetAccount, type TransferTxn } from './transfers';
 import {
 	runTransferDetection,
+	markPair,
 	approveReviewItem,
 	approveLoneLeg,
 	rejectReviewItem,
@@ -74,6 +75,51 @@ test('Plaid-flagged legs with no partner → ambiguous with empty candidates', (
 		{ txnId: 1, candidateIds: [] },
 		{ txnId: 2, candidateIds: [] }
 	]);
+});
+
+test('two out-legs competing for one in → both ambiguous, none auto-paired (#07)', () => {
+	const result = detectTransfers(
+		[
+			t(1, { account_id: 1, amount_cents: -50_000 }),
+			t(2, { account_id: 3, amount_cents: -50_000 }),
+			t(3, { account_id: 2, amount_cents: 50_000 })
+		],
+		{ windowDays: 4 }
+	);
+	expect(result.pairs).toEqual([]);
+	expect(result.ambiguous).toEqual([
+		{ txnId: 1, candidateIds: [3] },
+		{ txnId: 2, candidateIds: [3] }
+	]);
+});
+
+test('a clean pair still auto-pairs when an unrelated competing out is absent (#07)', () => {
+	const result = detectTransfers(
+		[
+			t(1, { account_id: 1, amount_cents: -50_000 }),
+			t(2, { account_id: 2, amount_cents: 50_000, date: '2026-06-11' }),
+			t(3, { account_id: 3, amount_cents: -12_000 }),
+			t(4, { account_id: 2, amount_cents: 12_000, date: '2026-06-11' })
+		],
+		{ windowDays: 4 }
+	);
+	expect(result.pairs).toEqual([
+		{ outId: 1, inId: 2 },
+		{ outId: 3, inId: 4 }
+	]);
+	expect(result.ambiguous).toEqual([]);
+});
+
+test('a flagged in-leg offered as a candidate does not also get its own lone item (#39)', () => {
+	const result = detectTransfers(
+		[
+			t(1, { account_id: 1, amount_cents: -50_000 }),
+			t(2, { account_id: 3, amount_cents: -50_000 }),
+			t(3, { account_id: 2, amount_cents: 50_000, transfer_signal: true })
+		],
+		{ windowDays: 4 }
+	);
+	expect(result.ambiguous.some((a) => a.txnId === 3)).toBe(false);
 });
 
 test('isAssetAccount: savings/529/investment yes, checking/credit no', () => {
@@ -247,4 +293,89 @@ test('a rejected lone leg never auto-pairs, even when a partner appears later', 
 	expect(flags(db, out).is_transfer).toBe(0);
 	expect(flags(db, inn).is_transfer).toBe(0);
 	expect(db.prepare('SELECT COUNT(*) FROM review_items').pluck().get()).toBe(1);
+});
+
+test('approve refuses a non-member candidate and a stale already-paired leg (#08)', () => {
+	const db = makeDb();
+	const out = insertTxn(db, 'p-out', 1, -50_000);
+	const in1 = insertTxn(db, 'p-in1', 2, 50_000);
+	const in2 = insertTxn(db, 'p-in2', 3, 50_000);
+	runTransferDetection(db);
+	const itemId = db.prepare('SELECT id FROM review_items').pluck().get() as number;
+
+	// a candidate never offered by this item is rejected
+	const stranger = insertTxn(db, 'p-stray', 2, 50_000);
+	expect(() => approveReviewItem(db, itemId, stranger)).toThrow(/not a partner/);
+
+	// out-leg gets paired out-of-band (a race / stale item); the still-open item
+	// must refuse to overwrite it rather than half-apply a one-way pointer
+	markPair(db, out, in1);
+	expect(() => approveReviewItem(db, itemId, in2)).toThrow(/stale/);
+	expect(flags(db, in2).is_transfer).toBe(0);
+});
+
+test('approving one item supersedes overlapping siblings (#39)', () => {
+	const db = makeDb();
+	const out1 = insertTxn(db, 'o1', 1, -50_000); // checking
+	const out2 = insertTxn(db, 'o2', 3, -50_000); // credit card
+	const inn = insertTxn(db, 'i1', 2, 50_000); // savings — both outs match it
+	runTransferDetection(db);
+	const items = db
+		.prepare("SELECT id FROM review_items WHERE status = 'open' ORDER BY id")
+		.pluck()
+		.all() as number[];
+	expect(items.length).toBe(2);
+
+	approveReviewItem(db, items[0], inn);
+
+	// the sibling that also listed inn is closed — no leftover judgment path
+	expect(db.prepare("SELECT COUNT(*) FROM review_items WHERE status = 'open'").pluck().get()).toBe(0);
+	expect(flags(db, out1).transfer_peer_id).toBe(inn);
+	expect(flags(db, inn).transfer_peer_id).toBe(out1);
+	expect(flags(db, out2).is_transfer).toBe(0); // never wrongly paired
+});
+
+test('a candidate under open review is not auto-paired by a later sync (#07 cross-run)', () => {
+	const db = makeDb();
+	insertTxn(db, 'a-out', 1, -50_000); // checking, matches both ins → ambiguous
+	const in1 = insertTxn(db, 'a-in1', 2, 50_000); // savings
+	insertTxn(db, 'a-in2', 3, 50_000); // credit card
+	runTransferDetection(db);
+	expect(db.prepare("SELECT COUNT(*) FROM review_items WHERE status='open'").pluck().get()).toBe(1);
+
+	// a later sync brings an out whose only match is in1 — which is still an
+	// unresolved candidate in the open item. It must NOT auto-pair.
+	const outB = insertTxn(db, 'a-outB', 3, -50_000);
+	runTransferDetection(db);
+
+	expect(flags(db, outB).is_transfer).toBe(0);
+	expect(flags(db, in1).transfer_peer_id).toBeNull();
+});
+
+test('markPair leaves no one-way pointer when the second leg cannot take (#08)', () => {
+	const db = makeDb();
+	const a = insertTxn(db, 'm-a', 1, -50_000);
+	const b = insertTxn(db, 'm-b', 2, 50_000);
+	const c = insertTxn(db, 'm-c', 3, 50_000);
+	markPair(db, a, b); // a ↔ b
+	// pairing a fresh unpaired leg (c) with the already-paired b must not strand c
+	expect(() => markPair(db, c, b)).toThrow(/already paired/);
+	expect(flags(db, c).transfer_peer_id).toBeNull();
+	expect(flags(db, c).is_transfer).toBe(0);
+});
+
+test('approveLoneLeg refuses a leg that is already paired, preserving is_saved (#39)', () => {
+	const db = makeDb();
+	const out = insertTxn(db, 'lp-out', 1, -50_000, '2026-06-10', 'TRANSFER_OUT');
+	const inn = insertTxn(db, 'lp-in', 2, 50_000, '2026-06-11'); // savings → saved
+	markPair(db, out, inn);
+	expect(flags(db, inn).is_saved).toBe(1);
+
+	// a stale lone item still points at the now-paired out-leg
+	const itemId = db
+		.prepare("INSERT INTO review_items (kind, payload) VALUES ('transfer-ambiguity', ?) RETURNING id")
+		.pluck()
+		.get(JSON.stringify({ txnId: out, candidateIds: [] })) as number;
+	expect(() => approveLoneLeg(db, itemId, false)).toThrow(/stale|paired/);
+	expect(flags(db, inn).is_saved).toBe(1); // not flipped back to 0
 });
