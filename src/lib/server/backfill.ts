@@ -52,6 +52,18 @@ function markInterrupted(db: Database): void {
 	progress(db, `interrupted — ${p?.done ?? 0}/${p?.total ?? 0}`, p?.done ?? 0, p?.total ?? 0);
 }
 
+const TERMINAL = /^(done|interrupted|no connected inbox)/;
+
+/**
+ * #81 boot reconcile: a hard kill (SIGKILL, power loss) never runs the in-process
+ * catch, so a mid-scan progress row survives the restart. No scan can be running
+ * in a freshly booted process, so any non-terminal row is by definition stale.
+ */
+export function reconcileBackfillProgress(db: Database): void {
+	const p = backfillProgress(db);
+	if (p && !TERMINAL.test(p.label)) markInterrupted(db);
+}
+
 /** The scan track record Settings shows: charges by receipt_search_state. */
 export function receiptScanStats(db: Database): Record<string, number> {
 	const rows = db

@@ -143,8 +143,9 @@ test('a dead re-lookup never wipes a prior match (#42)', async () => {
 	const row = stateOf(db, id);
 	expect(row.s).toBe('matched');
 	expect((JSON.parse(row.j!) as ReceiptCandidate).messageId).toBe('m1');
-	// and a real (successful) no-match re-lookup also keeps it — evidence outlives one empty search
-	expect(await triggerLookup(db, fakeSource([]), id, TODAY)).toBe('matched');
+	// and a real (successful) no-match re-lookup also keeps it — 'retained', not a
+	// fresh 'matched' (callers must not re-enrich); evidence outlives one empty search
+	expect(await triggerLookup(db, fakeSource([]), id, TODAY)).toBe('retained');
 	expect(stateOf(db, id).j).not.toBeNull();
 });
 

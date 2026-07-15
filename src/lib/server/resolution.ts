@@ -80,7 +80,7 @@ export async function triggerLookup(
 	source: ReceiptSource,
 	txnId: number,
 	today: string = new Date().toISOString().slice(0, 10)
-): Promise<'matched' | 'pending' | 'exhausted' | 'unsearched'> {
+): Promise<SearchOutcome> {
 	const charge = db
 		.prepare('SELECT id, date, amount_cents, merchant, name FROM transactions WHERE id = ?')
 		.get(txnId) as ChargeRow | undefined;
@@ -88,13 +88,19 @@ export async function triggerLookup(
 	return searchOne(db, source, charge, matchOptions(db), today);
 }
 
+// 'matched' = fresh hit (callers enrich + re-categorize); 'retained' = a prior
+// match kept because this pass found nothing new (callers must NOT re-enrich —
+// that would burn an LLM call and can null good facts on a flaky reply);
+// 'unsearched' = no inbox answered, state left untouched.
+export type SearchOutcome = 'matched' | 'retained' | 'pending' | 'exhausted' | 'unsearched';
+
 async function searchOne(
 	db: Database,
 	source: ReceiptSource,
 	charge: ChargeRow,
 	opts: MatchOptions,
 	today: string
-): Promise<'matched' | 'pending' | 'exhausted' | 'unsearched'> {
+): Promise<SearchOutcome> {
 	const facts: ChargeFacts = {
 		amount_cents: charge.amount_cents,
 		date: charge.date,
@@ -125,8 +131,9 @@ async function searchOne(
 		return 'matched';
 	}
 	// a re-lookup that finds nothing must not destroy a prior match's stored
-	// evidence while its category still cites it (#42) — keep it, look again later
-	if (currentState(db, charge.id) === 'matched') return 'matched';
+	// evidence while its category still cites it (#42) — keep it, look again later.
+	// 'retained' (not 'matched') so callers don't re-enrich an unchanged match.
+	if (currentState(db, charge.id) === 'matched') return 'retained';
 	const state = ageDays(charge.date, today) > opts.windowDays ? 'exhausted' : 'pending';
 	setState(db, charge.id, state);
 	return state;

@@ -97,7 +97,8 @@ export function ledgerActions() {
 				// dead Gmail connection: nothing was searched, nothing changed — say so
 				if (outcome === 'unsearched')
 					return fail(400, { message: 'no connected inbox — re-enroll Gmail in Settings' });
-				// a manual match enriches and re-categorizes right away, no sync wait
+				// a fresh match enriches and re-categorizes right away, no sync wait;
+				// 'retained' kept a prior match unchanged, so it needs neither
 				if (outcome === 'matched') await enrichAndCategorize(db, realLlm, [id]).catch(() => {});
 				return { ok: true, lookup: outcome };
 			} catch (e) {

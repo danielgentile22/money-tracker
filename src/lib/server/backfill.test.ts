@@ -1,7 +1,13 @@
 import { test, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { migrate } from './db/migrate';
-import { runCategorizationScan, runReceiptScan, runLookupBatch, backfillProgress } from './backfill';
+import {
+	runCategorizationScan,
+	runReceiptScan,
+	runLookupBatch,
+	backfillProgress,
+	reconcileBackfillProgress
+} from './backfill';
 import type { ChargeFacts, ReceiptCandidate } from './gmail';
 import type { LlmRequest } from './llm';
 
@@ -131,6 +137,48 @@ test('a receipt scan refuses over a dead Gmail connection instead of searching (
 		.get() as { s: string; j: string };
 	expect(state.s).toBe('matched');
 	expect(state.j).toContain('keep');
+});
+
+test("an 'all' scan keeps a prior match and does not re-enrich when re-search finds nothing", async () => {
+	const db = makeDb();
+	db.prepare(
+		`INSERT INTO transactions (account_id, plaid_transaction_id, date, name, merchant, amount_cents, unresolved, receipt_search_state, receipt_json, receipt_facts_json)
+		 VALUES (1, 'k-1', '2026-07-01', 'RAW', 'Shop', -1200, 1, 'matched', '{"messageId":"keep"}', '{"description":"old facts"}')`
+	).run();
+	const drySource = {
+		async searchReceipts(): Promise<ReceiptCandidate[]> {
+			return [];
+		}
+	};
+	const prompts: string[] = [];
+	const llm = async (req: LlmRequest) => {
+		prompts.push(req.prompt);
+		return '{}';
+	};
+	await runReceiptScan(db, drySource, llm, 'all');
+	const row = db
+		.prepare(
+			'SELECT receipt_search_state AS s, receipt_json AS j, receipt_facts_json AS f FROM transactions WHERE id = 1'
+		)
+		.get() as { s: string; j: string; f: string };
+	expect(row.s).toBe('matched');
+	expect(row.j).toContain('keep');
+	expect(JSON.parse(row.f).description).toBe('old facts'); // preserved, not nulled
+	expect(prompts.find((p) => !p.startsWith('Categorize'))).toBeUndefined(); // no extraction call
+});
+
+test('boot reconcile marks a stale mid-scan progress row interrupted, leaves terminal rows', () => {
+	const db = makeDb();
+	const set = (label: string) =>
+		db
+			.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('backfill_progress', ?)")
+			.run(JSON.stringify({ label, done: 3, total: 10 }));
+	set('searching receipts'); // a scan that a hard crash never got to finish
+	reconcileBackfillProgress(db);
+	expect(backfillProgress(db)?.label).toContain('interrupted');
+	set('done — 10 searches, 2 matched'); // a clean terminal row survives untouched
+	reconcileBackfillProgress(db);
+	expect(backfillProgress(db)?.label).toContain('done');
 });
 
 test('lookup batch searches exactly the given charges and enriches fresh matches', async () => {

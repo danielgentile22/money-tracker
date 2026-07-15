@@ -54,9 +54,11 @@
 		<p class="t-body-sm">
 			Receipt lookup: {form.lookup === 'matched'
 				? 'match found — details extracted and the Category re-judged'
-				: form.lookup === 'pending'
-					? 'nothing yet — will retry on coming syncs'
-					: 'no receipt found'}
+				: form.lookup === 'retained'
+					? 'no newer match — existing receipt kept'
+					: form.lookup === 'pending'
+						? 'nothing yet — will retry on coming syncs'
+						: 'no receipt found'}
 		</p>
 	</div>
 {/if}
