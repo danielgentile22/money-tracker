@@ -1,9 +1,9 @@
 import type { Database } from 'better-sqlite3';
-import { normalizeMerchant, categorize, matchRule, isUnresolved, type RuleRow } from './categorizer';
+import { normalizeMerchant, categorize, matchRule, fits, isUnresolved, type RuleRow } from './categorizer';
 
 export function loadRules(db: Database): RuleRow[] {
 	return db
-		.prepare('SELECT id, merchant, min_amount_cents, max_amount_cents, category_id FROM rules')
+		.prepare('SELECT id, merchant, min_amount_cents, max_amount_cents, category_id FROM rules ORDER BY id')
 		.all() as RuleRow[];
 }
 
@@ -27,18 +27,38 @@ export function otherCategoryId(db: Database): number {
  * and idempotent: Tags the owner removed by hand can reappear only if the Rule
  * still matches, and nothing is ever detached here.
  */
-// ponytail: one set-based pass over all transactions instead of per-row
-// matching — trivially correct at household volume; scope by txn ids if slow.
+// Matching runs in JS through the same `fits` predicate matchRule uses, so the
+// two halves of Rule application fold case identically (Unicode toLowerCase, not
+// SQLite's ASCII-only lower()) — a non-ASCII merchant gets both its Category and
+// its Tags, never one without the other.
+// ponytail: nested loop over all transactions × tagged rules — trivially correct
+// at household volume; index merchant→txns or scope by txn ids if it ever drags.
 export function applyRuleTags(db: Database): void {
-	db.prepare(
-		`INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id)
-		 SELECT t.id, rt.tag_id
-		 FROM rules r
-		 JOIN rule_tags rt ON rt.rule_id = r.id
-		 JOIN transactions t ON lower(t.merchant) = lower(r.merchant)
-		   AND (r.min_amount_cents IS NULL OR ABS(t.amount_cents) >= r.min_amount_cents)
-		   AND (r.max_amount_cents IS NULL OR ABS(t.amount_cents) <= r.max_amount_cents)`
-	).run();
+	const tagsByRule = new Map<number, number[]>();
+	for (const rt of db.prepare('SELECT rule_id, tag_id FROM rule_tags').all() as {
+		rule_id: number;
+		tag_id: number;
+	}[])
+		(tagsByRule.get(rt.rule_id) ?? tagsByRule.set(rt.rule_id, []).get(rt.rule_id)!).push(rt.tag_id);
+	if (tagsByRule.size === 0) return;
+	const tagged = loadRules(db).filter((r) => tagsByRule.has(r.id));
+	const txns = db.prepare('SELECT id, merchant, amount_cents FROM transactions').all() as {
+		id: number;
+		merchant: string | null;
+		amount_cents: number;
+	}[];
+	const attach = db.prepare(
+		'INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)'
+	);
+	db.transaction(() => {
+		for (const t of txns) {
+			const merchant = (t.merchant ?? '').toLowerCase();
+			const abs = Math.abs(t.amount_cents);
+			for (const r of tagged)
+				if (fits(r, merchant, abs))
+					for (const tagId of tagsByRule.get(r.id)!) attach.run(t.id, tagId);
+		}
+	})();
 }
 
 /**

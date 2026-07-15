@@ -61,10 +61,25 @@ function rehome(db: Database, fromId: number, intoId: number): void {
 	db.prepare('DELETE FROM budgets WHERE category_id = ?').run(fromId);
 }
 
+/**
+ * Guard a re-home destination: it must exist, and it can't be an analytics anchor
+ * ('Income'/'Transfer') — merging spending there silently pollutes the anchor.
+ * 'Other' is exempt: it's the taxonomy's fallback sink, the intended destination.
+ */
+function guardDestination(db: Database, intoId: number): void {
+	const name = db.prepare('SELECT name FROM categories WHERE id = ?').pluck().get(intoId) as
+		| string
+		| undefined;
+	if (!name) throw new Error('merge destination does not exist');
+	if (isProtectedCategory(name) && name.toLowerCase() !== 'other')
+		throw new Error(`"${name}" anchors analytics — it can't be a merge destination`);
+}
+
 /** Merge A into B: re-point Transactions, Rules, and mapping rows; A disappears. */
 export function mergeCategory(db: Database, fromId: number, intoId: number): void {
 	if (fromId === intoId) throw new Error('cannot merge a Category into itself');
 	guardProtected(db, fromId, 'merged away');
+	guardDestination(db, intoId);
 	db.transaction(() => {
 		rehome(db, fromId, intoId);
 		db.prepare('DELETE FROM categories WHERE id = ?').run(fromId);

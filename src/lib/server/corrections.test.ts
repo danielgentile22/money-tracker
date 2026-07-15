@@ -193,6 +193,27 @@ test('a tag-only Rule labels matches but leaves the Category to the Plaid map', 
 	).toThrow(/Category, Tags, or both/);
 });
 
+test('Rule Tags attach across non-ASCII merchant casing, same as the Category', () => {
+	const db = makeDb();
+	const tag = db.prepare("INSERT INTO tags (name) VALUES ('Coffee') RETURNING id").pluck().get() as number;
+	// stored txn merchant lower-cases 'É' → 'é'; SQLite lower() wouldn't, JS toLowerCase does
+	const t1 = insertTxn(db, 't-1', 'Café Nero', 'plaid');
+	db.prepare('INSERT INTO rules (merchant, category_id) VALUES (?, ?)').run('CAFÉ NERO', cat(db, 'Kids'));
+	const ruleId = db.prepare('SELECT id FROM rules').pluck().get() as number;
+
+	updateRule(db, ruleId, {
+		merchant: 'CAFÉ NERO',
+		minAmountCents: null,
+		maxAmountCents: null,
+		categoryId: cat(db, 'Kids'),
+		tagIds: [tag]
+	});
+
+	// category applied AND the tag attached — not one without the other
+	expect(txnState(db, t1)).toEqual({ category: 'Kids', source: 'rule' });
+	expect(txnTags(db, t1)).toEqual(['Coffee']);
+});
+
 // --- bulk Correction (CONTEXT.md): always a one-off batch fix, never mints a Rule ---
 
 test('bulk Correction recategorizes every selected Transaction, Rules untouched', () => {

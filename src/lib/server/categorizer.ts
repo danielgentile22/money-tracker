@@ -43,8 +43,8 @@ export function normalizeMerchant(rawName: string, plaidMerchantName?: string | 
 	return s || rawName.trim();
 }
 
-/** Merchant + |amount|-range predicate shared by the ladder and the explainer. */
-function fits(r: RuleRow, merchant: string, abs: number): boolean {
+/** Merchant + |amount|-range predicate shared by the ladder, explainer, and Tag application. */
+export function fits(r: RuleRow, merchant: string, abs: number): boolean {
 	return (
 		r.merchant.toLowerCase() === merchant &&
 		(r.min_amount_cents == null || abs >= r.min_amount_cents) &&
@@ -52,7 +52,19 @@ function fits(r: RuleRow, merchant: string, abs: number): boolean {
 	);
 }
 
-/** First matching Rule; a ranged Rule only matches inside its |amount| range. */
+// Range width as a specificity score: narrower wins. An open side extends to the
+// absolute-cents limits (0 / MAX_SAFE_INTEGER), so a half-open Rule still beats a
+// fully unranged one, and both beat nothing — no NaN, no Infinity arithmetic.
+function span(r: RuleRow): number {
+	return (r.max_amount_cents ?? Number.MAX_SAFE_INTEGER) - (r.min_amount_cents ?? 0);
+}
+
+/**
+ * The winning Rule for a Transaction: among all that fit, the narrowest |amount|
+ * range wins (a ranged Rule beats an unranged one for the same Merchant), ties
+ * broken by lowest id. Deterministic regardless of row/scan order — the same
+ * Transaction and Rules always yield the same Category.
+ */
 export function matchRule(
 	txn: Pick<TxnFacts, 'merchant' | 'amount_cents'>,
 	rules: readonly RuleRow[]
@@ -62,8 +74,11 @@ export function matchRule(
 	// tag-only Rules attach Tags elsewhere; the ladder skips them
 	const hits = rules.filter((r) => r.category_id != null && fits(r, merchant, abs));
 	if (hits.length === 0) return null;
-	// a ranged Rule is more specific than an unranged one for the same Merchant
-	return hits.find((r) => r.min_amount_cents != null || r.max_amount_cents != null) ?? hits[0];
+	return hits.reduce((best, r) => {
+		const bs = span(best);
+		const rs = span(r);
+		return rs < bs || (rs === bs && r.id < best.id) ? r : best;
+	});
 }
 
 /**
