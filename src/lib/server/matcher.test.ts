@@ -69,3 +69,24 @@ test('window edges: day 14 still scores, day 15 disqualifies', () => {
 	expect(matchReceipt(charge, [edge], OPTS)).toBe(edge);
 	expect(matchReceipt(charge, [past], OPTS)).toBeNull();
 });
+
+// --- amount boundary (#21): a substring hit is not an amount signal ---
+
+test("'5.00' does not match inside '15.00' — no phantom amount signal", () => {
+	const c: ChargeFacts = { amount_cents: -500, date: '2026-06-15', merchant: 'Nowhere Co' };
+	// close date, but the only "5.00" is buried in "15.00", and no merchant token
+	const lookalike = candidate({ subject: 'Receipt total $15.00', from: 'x@y.z', date: '2026-06-15' });
+	expect(matchReceipt(c, [lookalike], OPTS)).toBeNull();
+});
+
+// --- comma-grouped totals (#60): $1,000+ still earns the amount signal ---
+
+test('a $1,000+ charge matches the comma-grouped receipt total, and queries both', () => {
+	const big: ChargeFacts = { amount_cents: -123456, date: '2026-06-15', merchant: 'AMZN Mktp US' };
+	expect(buildReceiptQuery(big, 14)).toContain('"1234.56" OR "1,234.56"');
+	const printed = candidate({ subject: 'Order total $1,234.56', from: 'orders@amzn.example.com' });
+	expect(matchReceipt(big, [printed], OPTS)).toBe(printed);
+	// and the bare rendering must not match inside a larger grouped number
+	const bigger = candidate({ subject: 'Order total $11,234.56', date: '2026-06-15' });
+	expect(matchReceipt(big, [bigger], OPTS)).toBeNull();
+});

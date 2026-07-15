@@ -41,6 +41,17 @@ function progress(db: Database, label: string, done = 0, total = 0): void {
 	);
 }
 
+/** A Gmail scan needs at least one live inbox — otherwise every "no match" is a lie. */
+export function hasConnectedInbox(db: Database): boolean {
+	return !!db.prepare("SELECT 1 FROM inboxes WHERE status = 'connected' LIMIT 1").pluck().get();
+}
+
+/** #81: a crash mid-scan must not leave a half-full bar as the 'last scan' record. */
+function markInterrupted(db: Database): void {
+	const p = backfillProgress(db);
+	progress(db, `interrupted — ${p?.done ?? 0}/${p?.total ?? 0}`, p?.done ?? 0, p?.total ?? 0);
+}
+
 /** The scan track record Settings shows: charges by receipt_search_state. */
 export function receiptScanStats(db: Database): Record<string, number> {
 	const rows = db
@@ -85,6 +96,9 @@ export async function runCategorizationScan(
 			progress(db, 'categorizing', Math.min(i + 100, ids.length), ids.length);
 		}
 		progress(db, `done — ${ids.length} categorized`, ids.length, ids.length);
+	} catch (e) {
+		markInterrupted(db); // #81: never leave a mid-scan bar as the 'last scan' record
+		throw e;
 	} finally {
 		running = false;
 	}
@@ -103,6 +117,13 @@ export async function runReceiptScan(
 	scope: 'all' | 'month' = 'all'
 ): Promise<void> {
 	if (running || isSyncing()) return;
+	// refuse over a dead Gmail connection: an all-inboxes-expired scan would
+	// otherwise re-search every matched charge, find nothing, and (before #05's
+	// searchOne guard) wipe the receipt corpus. Surface it on the progress bar.
+	if (!hasConnectedInbox(db)) {
+		progress(db, 'no connected inbox — re-enroll Gmail in Settings');
+		return;
+	}
 	running = true;
 	try {
 		const charges = db
@@ -123,6 +144,9 @@ export async function runReceiptScan(
 			charges.length,
 			charges.length
 		);
+	} catch (e) {
+		markInterrupted(db);
+		throw e;
 	} finally {
 		running = false;
 	}
@@ -140,10 +164,17 @@ export async function runLookupBatch(
 	ids: number[]
 ): Promise<void> {
 	if (running || isSyncing()) return;
+	if (!hasConnectedInbox(db)) {
+		progress(db, 'no connected inbox — re-enroll Gmail in Settings');
+		return;
+	}
 	running = true;
 	try {
 		const matched = await lookupLoop(db, source, llm, ids);
 		progress(db, `done — ${ids.length} receipt searches, ${matched} matched`, ids.length, ids.length);
+	} catch (e) {
+		markInterrupted(db);
+		throw e;
 	} finally {
 		running = false;
 	}
