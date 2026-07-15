@@ -1,5 +1,5 @@
 import type { Database } from 'better-sqlite3';
-import type { ChargeFacts, ReceiptSource } from './gmail';
+import { ReceiptSearchUnavailable, type ChargeFacts, type ReceiptSource } from './gmail';
 import { matchReceipt, type MatchOptions } from './matcher';
 import type { Llm } from './llm';
 import { enrichTransaction } from './receipt-extractor';
@@ -80,7 +80,7 @@ export async function triggerLookup(
 	source: ReceiptSource,
 	txnId: number,
 	today: string = new Date().toISOString().slice(0, 10)
-): Promise<'matched' | 'pending' | 'exhausted'> {
+): Promise<SearchOutcome> {
 	const charge = db
 		.prepare('SELECT id, date, amount_cents, merchant, name FROM transactions WHERE id = ?')
 		.get(txnId) as ChargeRow | undefined;
@@ -88,19 +88,34 @@ export async function triggerLookup(
 	return searchOne(db, source, charge, matchOptions(db), today);
 }
 
+// 'matched' = fresh hit (callers enrich + re-categorize); 'retained' = a prior
+// match kept because this pass found nothing new (callers must NOT re-enrich —
+// that would burn an LLM call and can null good facts on a flaky reply);
+// 'unsearched' = no inbox answered, state left untouched.
+export type SearchOutcome = 'matched' | 'retained' | 'pending' | 'exhausted' | 'unsearched';
+
 async function searchOne(
 	db: Database,
 	source: ReceiptSource,
 	charge: ChargeRow,
 	opts: MatchOptions,
 	today: string
-): Promise<'matched' | 'pending' | 'exhausted'> {
+): Promise<SearchOutcome> {
 	const facts: ChargeFacts = {
 		amount_cents: charge.amount_cents,
 		date: charge.date,
 		merchant: charge.merchant ?? charge.name
 	};
-	const match = matchReceipt(facts, await source.searchReceipts(facts), opts);
+	let candidates;
+	try {
+		candidates = await source.searchReceipts(facts);
+	} catch (e) {
+		// no inbox actually answered — leave state and any stored match untouched
+		// rather than falsely downgrading/exhausting a charge over a dead connection (#05)
+		if (e instanceof ReceiptSearchUnavailable) return 'unsearched';
+		throw e;
+	}
+	const match = matchReceipt(facts, candidates, opts);
 	if (match) {
 		try {
 			// body is bonus evidence for the extractor — a failed fetch never voids the match
@@ -108,14 +123,27 @@ async function searchOne(
 		} catch {
 			match.body = undefined;
 		}
+		// clear stale facts so a fresh match never inherits facts extracted from a
+		// different email (#41); the enrich pass repopulates them
 		db.prepare(
-			"UPDATE transactions SET receipt_search_state = 'matched', receipt_json = ? WHERE id = ?"
+			"UPDATE transactions SET receipt_search_state = 'matched', receipt_json = ?, receipt_facts_json = NULL WHERE id = ?"
 		).run(JSON.stringify(match), charge.id);
 		return 'matched';
 	}
+	// a re-lookup that finds nothing must not destroy a prior match's stored
+	// evidence while its category still cites it (#42) — keep it, look again later.
+	// 'retained' (not 'matched') so callers don't re-enrich an unchanged match.
+	if (currentState(db, charge.id) === 'matched') return 'retained';
 	const state = ageDays(charge.date, today) > opts.windowDays ? 'exhausted' : 'pending';
 	setState(db, charge.id, state);
 	return state;
+}
+
+function currentState(db: Database, txnId: number): string | null {
+	return db
+		.prepare('SELECT receipt_search_state FROM transactions WHERE id = ?')
+		.pluck()
+		.get(txnId) as string | null;
 }
 
 function setState(db: Database, txnId: number, state: string): void {
@@ -168,6 +196,15 @@ export async function runResolution(
 	llm: Llm,
 	today?: string
 ): Promise<void> {
-	const matched = await runReceiptSearch(db, source, today);
-	await enrichAndCategorize(db, llm, matched);
+	await runReceiptSearch(db, source, today);
+	// enrich every matched row still missing facts — fresh matches (searchOne
+	// nulls facts) AND rows stranded by a prior LLM outage. receipt_json is
+	// already stored, so this needs no Gmail call and self-heals #40 next sync.
+	const pending = db
+		.prepare(
+			"SELECT id FROM transactions WHERE receipt_search_state = 'matched' AND receipt_facts_json IS NULL"
+		)
+		.pluck()
+		.all() as number[];
+	await enrichAndCategorize(db, llm, pending);
 }

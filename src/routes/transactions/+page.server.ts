@@ -8,9 +8,10 @@ import { listReports } from '$lib/server/saved-reports';
 import { openReviewCount } from '$lib/server/dashboard';
 import { savedReportActions } from '$lib/server/saved-report-actions';
 import { ledgerActions } from '$lib/server/ledger-actions';
-import { runLookupBatch, isBackfilling } from '$lib/server/backfill';
+import { runLookupBatch, isBackfilling, hasConnectedInbox } from '$lib/server/backfill';
 import { realReceiptSource } from '$lib/server/gmail';
 import { realLlm } from '$lib/server/llm';
+import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
 const PAGE_SIZE = 100;
@@ -110,6 +111,8 @@ export const actions: Actions = {
 		// the page's query string rides along so the batch matches what's filtered
 		const url = new URL(String(f.get('qs') ?? ''), 'http://localhost');
 		const ids = lookupTargets(url);
+		if (!hasConnectedInbox(db))
+			return fail(400, { message: 'no connected inbox — re-enroll Gmail in Settings' });
 		void runLookupBatch(db, realReceiptSource, realLlm, ids).catch((e) =>
 			console.error('bulk lookup failed:', e)
 		);

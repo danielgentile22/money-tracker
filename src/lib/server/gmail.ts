@@ -49,6 +49,14 @@ export interface ReceiptSource {
 }
 
 /**
+ * Thrown when a receipt search reached NO inbox successfully (all connected
+ * inboxes errored, or none are connected). An empty candidate array means a
+ * clean no-match; this means "we never actually looked" — the caller must NOT
+ * transition receipt state or wipe stored evidence on it.
+ */
+export class ReceiptSearchUnavailable extends Error {}
+
+/**
  * The real ReceiptSource: one narrow query per charge against every connected
  * Inbox, candidates capped per Inbox. Search returns metadata + snippet only;
  * the matched candidate's body comes via one extra fetchBody call. One dead
@@ -58,7 +66,9 @@ export const realReceiptSource: ReceiptSource = {
 	async searchReceipts(charge) {
 		const query = buildReceiptQuery(charge, receiptWindowDays(db));
 		const out: ReceiptCandidate[] = [];
-		for (const inbox of listInboxes().filter((i) => i.status === 'connected')) {
+		const connected = listInboxes().filter((i) => i.status === 'connected');
+		let searched = 0;
+		for (const inbox of connected) {
 			try {
 				const token = await inboxAccessToken(inbox);
 				const list = await gmailApi<{ messages?: { id: string }[] }>(
@@ -82,10 +92,17 @@ export const realReceiptSource: ReceiptSource = {
 						snippet: msg.snippet ?? ''
 					});
 				}
-			} catch {
-				// expired tokens are already marked on the row; sync must not fail over mail
+				searched++;
+			} catch (e) {
+				// invalid_grant already marked the row expired; transient failures
+				// (429/5xx/network) don't — log them so a dead integration is visible
+				// instead of masquerading as a clean no-match (#20).
+				console.error(`receipt search failed for inbox ${inbox.address}:`, e);
 			}
 		}
+		// No inbox answered → we never actually looked. Signal it so the caller
+		// leaves receipt state (and any stored match) untouched (#05).
+		if (searched === 0) throw new ReceiptSearchUnavailable(`no inbox answered (${connected.length} connected)`);
 		return out;
 	},
 
@@ -120,7 +137,7 @@ function partText(part: GmailPart | undefined, mime: string): string {
 	return '';
 }
 
-function extractText(payload?: GmailPart): string {
+export function extractText(payload?: GmailPart): string {
 	const plain = partText(payload, 'text/plain');
 	if (plain.trim()) return plain;
 	// ponytail: crude tag strip, not an HTML parser — receipts are simple markup
@@ -269,6 +286,9 @@ async function gmailApi<T>(accessToken: string, path: string): Promise<T> {
 	const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
 		headers: { authorization: `Bearer ${accessToken}` }
 	});
+	// ponytail: 429/5xx just throw and count as an inbox failure (searchReceipts
+	// logs + signals via ReceiptSearchUnavailable) — no backoff for a single-user
+	// app; add per-inbox retry if quota errors ever show up in the logs.
 	if (!res.ok) throw new Error(`Gmail API ${path}: HTTP ${res.status}`);
 	return res.json() as Promise<T>;
 }

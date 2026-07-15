@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { migrate } from './db/migrate';
 import { runReceiptSearch, runResolution, triggerLookup } from './resolution';
 import { LlmUnavailable, type LlmRequest } from './llm';
-import type { ChargeFacts, ReceiptCandidate } from './gmail';
+import { ReceiptSearchUnavailable, type ChargeFacts, type ReceiptCandidate } from './gmail';
 
 const TODAY = '2026-07-04';
 
@@ -116,6 +116,57 @@ test('resolved, transfer, and still-pending Transactions are never searched', as
 	const src = fakeSource([]);
 	await runReceiptSearch(db, src, TODAY);
 	expect(src.searched).toHaveLength(0);
+});
+
+// --- dead Gmail connection must never corrupt receipt state (#05, #42) ---
+
+const deadSource = () => ({
+	async searchReceipts(): Promise<ReceiptCandidate[]> {
+		throw new ReceiptSearchUnavailable('no inbox answered');
+	}
+});
+
+test('a search where no inbox answered leaves the charge untouched, not exhausted/pending', async () => {
+	const db = makeDb();
+	const id = insertCharge(db);
+	expect(await triggerLookup(db, deadSource(), id, TODAY)).toBe('unsearched');
+	expect(stateOf(db, id).s).toBeNull(); // no false state transition
+});
+
+test('a dead re-lookup never wipes a prior match (#42)', async () => {
+	const db = makeDb();
+	const id = insertCharge(db);
+	await runReceiptSearch(db, fakeSource([receipt()]), TODAY);
+	expect(stateOf(db, id).s).toBe('matched');
+	// a later lookup while Gmail is down doesn't search, and keeps the stored receipt
+	expect(await triggerLookup(db, deadSource(), id, TODAY)).toBe('unsearched');
+	const row = stateOf(db, id);
+	expect(row.s).toBe('matched');
+	expect((JSON.parse(row.j!) as ReceiptCandidate).messageId).toBe('m1');
+	// and a real (successful) no-match re-lookup also keeps it — 'retained', not a
+	// fresh 'matched' (callers must not re-enrich); evidence outlives one empty search
+	expect(await triggerLookup(db, fakeSource([]), id, TODAY)).toBe('retained');
+	expect(stateOf(db, id).j).not.toBeNull();
+});
+
+// --- a match stranded by an LLM outage self-heals on the next sync (#40) ---
+
+test('a matched row left factless by an LLM outage is re-enriched next sync — no Gmail call', async () => {
+	const db = makeDb();
+	const id = insertCharge(db);
+	const dead = async () => {
+		throw new LlmUnavailable('no key');
+	};
+	await runResolution(db, fakeSource([receipt({ snippet: 'AirPods $63.47' })]), dead, TODAY);
+	expect(stateOf(db, id).s).toBe('matched');
+	expect(txnOf(db, id).facts).toBeNull(); // stranded: matched but no facts
+
+	// next sync: the matched row is not re-searched, but the stored receipt IS re-extracted
+	const drySource = fakeSource([]); // Gmail returns nothing this pass
+	const { llm, prompts } = cannedLlm([FACTS_REPLY, '{"1": "Entertainment"}']);
+	await runResolution(db, drySource, llm, TODAY);
+	expect(drySource.searched).toHaveLength(0); // never re-queried Gmail for the matched row
+	expect(JSON.parse(txnOf(db, id).facts!).description).toBe('AirPods Pro (2nd gen)');
 });
 
 // --- manual re-trigger (story 17: works on ANY Transaction) ---

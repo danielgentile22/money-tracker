@@ -11,7 +11,8 @@ import {
 	runReceiptScan,
 	isBackfilling,
 	backfillProgress,
-	receiptScanStats
+	receiptScanStats,
+	hasConnectedInbox
 } from '$lib/server/backfill';
 import { householdContextBlock } from '$lib/server/assistant';
 import { setSecret, deleteSecret } from '$lib/server/keychain';
@@ -196,6 +197,8 @@ export const actions: Actions = {
 	},
 	receiptScan: async ({ request }) => {
 		const scope = String((await request.formData()).get('scope')) === 'month' ? 'month' : 'all';
+		if (!hasConnectedInbox(db))
+			return { ok: false, message: 'no connected inbox — re-enroll Gmail below first' };
 		void runReceiptScan(db, realReceiptSource, realLlm, scope).catch((e) =>
 			console.error('receipt scan failed:', e)
 		);

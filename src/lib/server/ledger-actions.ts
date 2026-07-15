@@ -2,7 +2,7 @@ import { db } from '$lib/server/db';
 import { applyCorrection, applyBulkCorrection } from '$lib/server/corrections';
 import { addTag, attachTag, detachTag, bulkAttach } from '$lib/server/tags';
 import { triggerLookup, enrichAndCategorize } from '$lib/server/resolution';
-import { runLookupBatch } from '$lib/server/backfill';
+import { runLookupBatch, hasConnectedInbox } from '$lib/server/backfill';
 import { realReceiptSource } from '$lib/server/gmail';
 import { realLlm } from '$lib/server/llm';
 import { fail, type Actions } from '@sveltejs/kit';
@@ -71,6 +71,8 @@ export function ledgerActions() {
 			const f = await request.formData();
 			const ids = f.getAll('ids').map(Number).filter(Boolean);
 			if (ids.length === 0) return fail(400, { message: 'select Transactions first' });
+			if (!hasConnectedInbox(db))
+				return fail(400, { message: 'no connected inbox — re-enroll Gmail in Settings' });
 			void runLookupBatch(db, realReceiptSource, realLlm, ids).catch((e) =>
 				console.error('bulk lookup failed:', e)
 			);
@@ -92,7 +94,11 @@ export function ledgerActions() {
 			try {
 				const id = Number(f.get('id'));
 				const outcome = await triggerLookup(db, realReceiptSource, id);
-				// a manual match enriches and re-categorizes right away, no sync wait
+				// dead Gmail connection: nothing was searched, nothing changed — say so
+				if (outcome === 'unsearched')
+					return fail(400, { message: 'no connected inbox — re-enroll Gmail in Settings' });
+				// a fresh match enriches and re-categorizes right away, no sync wait;
+				// 'retained' kept a prior match unchanged, so it needs neither
 				if (outcome === 'matched') await enrichAndCategorize(db, realLlm, [id]).catch(() => {});
 				return { ok: true, lookup: outcome };
 			} catch (e) {
