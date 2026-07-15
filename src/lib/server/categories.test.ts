@@ -104,6 +104,19 @@ test('Income, Transfer, and Other reject merge and delete', () => {
 	}
 });
 
+test('merge/delete into an analytics anchor is rejected; Other stays a valid sink', () => {
+	const db = makeDb();
+	const coffee = cat(db, 'Coffee');
+	insertTxn(db, 't1', 'Coffee', 'plaid');
+	// merging spending into Transfer/Income would pollute the anchor — refused
+	expect(() => mergeCategory(db, coffee, cat(db, 'Transfer'))).toThrow(/anchors analytics/);
+	expect(() => mergeCategory(db, coffee, cat(db, 'Income'))).toThrow(/anchors analytics/);
+	expect(() => mergeCategory(db, coffee, 999_999)).toThrow(/does not exist/);
+	// Other is the fallback sink — re-homing into it is fine
+	deleteCategory(db, coffee, cat(db, 'Other'));
+	expect(db.prepare('SELECT COUNT(*) FROM categories WHERE id = ?').pluck().get(coffee)).toBe(0);
+});
+
 test('protected Categories reject rename — the machinery is keyed on their names — but emoji-only saves pass', () => {
 	const db = makeDb();
 	for (const name of ['Income', 'Transfer', 'Other']) {

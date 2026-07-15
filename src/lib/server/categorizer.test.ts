@@ -95,6 +95,27 @@ test('a ranged Rule is preferred over an unranged one for the same Merchant', ()
 	expect(matchRule(facts({ amount_cents: -900 }), both)?.category_id).toBe(10);
 });
 
+test('the narrowest range wins — and it wins regardless of Rule order', () => {
+	const wide = rule({ id: 1, category_id: 10, min_amount_cents: 100, max_amount_cents: 900 });
+	const narrow = rule({ id: 2, category_id: 20, min_amount_cents: 400, max_amount_cents: 500 });
+	// both fit -450; narrow (span 100) beats wide (span 800) either way round
+	expect(matchRule(facts({ amount_cents: -450 }), [wide, narrow])?.category_id).toBe(20);
+	expect(matchRule(facts({ amount_cents: -450 }), [narrow, wide])?.category_id).toBe(20);
+});
+
+test('two equally-specific overlapping Rules resolve by lowest id, not array order', () => {
+	const a = rule({ id: 7, category_id: 10, min_amount_cents: 400, max_amount_cents: 500 });
+	const b = rule({ id: 3, category_id: 20, min_amount_cents: 400, max_amount_cents: 500 });
+	expect(matchRule(facts({ amount_cents: -450 }), [a, b])?.category_id).toBe(20); // id 3 < 7
+	expect(matchRule(facts({ amount_cents: -450 }), [b, a])?.category_id).toBe(20);
+});
+
+test('a half-open ranged Rule still beats a fully unranged one', () => {
+	const open = rule({ id: 1, category_id: 10 }); // unranged
+	const halfOpen = rule({ id: 2, category_id: 20, min_amount_cents: 400, max_amount_cents: null });
+	expect(matchRule(facts({ amount_cents: -450 }), [open, halfOpen])?.category_id).toBe(20);
+});
+
 // --- Unresolved (CONTEXT.md definition, both branches) ---
 
 test('no Rule + confidence below HIGH → Unresolved', () => {

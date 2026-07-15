@@ -41,7 +41,13 @@
 	const otherGroups = $derived(tree.filter((g) => g.id !== groupId));
 	const destinations = $derived(
 		tree
-			.map((g) => ({ ...g, categories: g.categories.filter((c) => c.id !== id) }))
+			// exclude self and the analytics anchors (Income/Transfer); 'Other' stays — it's the fallback sink
+			.map((g) => ({
+				...g,
+				categories: g.categories.filter(
+					(c) => c.id !== id && !(isProtectedCategory(c.name) && c.name !== 'Other')
+				)
+			}))
 			.filter((g) => g.categories.length > 0)
 	);
 </script>
