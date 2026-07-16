@@ -42,6 +42,13 @@ function shiftMonth(month: string, delta: number): string {
 const shiftDays = (date: string, delta: number) =>
 	new Date(Date.parse(date + 'T00:00:00Z') + delta * 86_400_000).toISOString().slice(0, 10);
 
+// Per-transaction detectors look back a trailing window rather than the current
+// calendar month, so a month-end charge synced after rollover (Plaid's 1–3 day
+// posting lag) still gets evaluated instead of falling through the crack between
+// the month it's dated in and the month it arrives in (#13). Concern identities
+// key on the transaction, so a row surfaces for ~35 days then ages out.
+const LOOKBACK_DAYS = 35;
+
 type TxnRow = {
 	id: number;
 	date: string;
@@ -62,9 +69,9 @@ const feesInterest: DetectorDef = {
 				 FROM transactions t JOIN categories c ON c.id = t.category_id
 				 WHERE c.name IN ('Fees', 'Interest') AND t.amount_cents < 0
 				   AND t.is_transfer = 0 AND t.is_investment_activity = 0
-				   AND substr(t.date, 1, 7) = ?`
+				   AND t.date >= ? AND t.date <= ?`
 			)
-			.all(today.slice(0, 7)) as TxnRow[];
+			.all(shiftDays(today, -LOOKBACK_DAYS), today) as TxnRow[];
 		return rows.map((t) => {
 			const abs = -t.amount_cents;
 			return {
@@ -91,9 +98,9 @@ const largeOneOff: DetectorDef = {
 				`SELECT t.id, t.date, t.merchant, t.name, t.amount_cents, NULL AS category_name
 				 FROM transactions t
 				 WHERE t.amount_cents <= ? AND t.is_transfer = 0 AND t.is_investment_activity = 0
-				   AND t.recurring_series_id IS NULL AND substr(t.date, 1, 7) = ?`
+				   AND t.recurring_series_id IS NULL AND t.date >= ? AND t.date <= ?`
 			)
-			.all(-floorCents, today.slice(0, 7)) as TxnRow[];
+			.all(-floorCents, shiftDays(today, -LOOKBACK_DAYS), today) as TxnRow[];
 		return rows.map((t) => {
 			const abs = -t.amount_cents;
 			return {
@@ -329,7 +336,6 @@ const duplicateCharge: DetectorDef = {
 	label: 'Duplicate charge',
 	knobs: [{ key: 'window', label: 'Days apart', default: 3, unit: 'days' }],
 	run(db, knobs, today) {
-		const month = today.slice(0, 7);
 		const rows = db
 			.prepare(
 				`SELECT id, merchant, date, amount_cents FROM transactions
@@ -338,7 +344,7 @@ const duplicateCharge: DetectorDef = {
 				   AND date >= ? AND date <= ?
 				 ORDER BY merchant COLLATE NOCASE, amount_cents, date`
 			)
-			.all(shiftDays(`${month}-01`, -knobs.window), today) as {
+			.all(shiftDays(today, -(LOOKBACK_DAYS + knobs.window)), today) as {
 			id: number;
 			merchant: string;
 			date: string;
@@ -350,7 +356,9 @@ const duplicateCharge: DetectorDef = {
 			const b = rows[i];
 			if (a.merchant.toLowerCase() !== b.merchant.toLowerCase() || a.amount_cents !== b.amount_cents) continue;
 			const gap = Math.round((Date.parse(b.date) - Date.parse(a.date)) / 86_400_000);
-			if (gap > knobs.window || b.date.slice(0, 7) !== month) continue;
+			// report a pair whose second charge fell inside the trailing window, so
+			// a month-end duplicate synced after rollover still fires (#13)
+			if (gap > knobs.window || b.date < shiftDays(today, -LOOKBACK_DAYS)) continue;
 			const abs = -a.amount_cents;
 			out.push({
 				detector: this.key,

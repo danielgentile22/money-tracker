@@ -133,12 +133,21 @@ export function reportData(
 		offset: ((opts.page ?? 1) - 1) * pageSize
 	});
 
+	// The in-progress month holds only partial spend; counting it as a full month
+	// in the divisor biased the headline average low whenever the range runs to
+	// today (the default). Average over complete months only (#65).
+	const thisMonth = today.slice(0, 7);
+	const fullMonths = months.filter((m) => m < thisMonth);
+	const avgTotal =
+		fullMonths.length > 0 ? stats.total_cents - (byMonth.get(thisMonth) ?? 0) : stats.total_cents;
+	const avgDivisor = Math.max(1, fullMonths.length || months.length);
+
 	return {
 		months: months.map((month) => ({ month, total_cents: byMonth.get(month) ?? 0 })),
 		breakdown,
 		stats: {
 			total_cents: stats.total_cents,
-			monthly_avg_cents: Math.round(stats.total_cents / months.length),
+			monthly_avg_cents: Math.round(avgTotal / avgDivisor),
 			txn_count: stats.txn_count
 		},
 		rows: rows.slice(0, pageSize),

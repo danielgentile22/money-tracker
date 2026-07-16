@@ -34,12 +34,18 @@ export function setRolloverAnchor(db: Database, categoryId: number, month: strin
 
 // ---------- fill-forward resolution ----------
 
-/** category_id → effective budget cents for the month (fill-forward, zeros kept). */
+/**
+ * category_id → effective budget cents for the month (fill-forward, zeros kept).
+ * Disabled Categories are excluded so both consumers (budgetMonth and the
+ * over-budget detector via budgetStatus) agree on which budgets exist — a
+ * disabled Category the owner can't see or clear must not raise Concerns (#64).
+ */
 function effectiveBudgets(db: Database, month: string): Map<number, number> {
 	const rows = db
 		.prepare(
-			`SELECT category_id, amount_cents FROM budgets b
-			 WHERE month = (SELECT MAX(month) FROM budgets b2
+			`SELECT b.category_id, b.amount_cents FROM budgets b
+			 JOIN categories c ON c.id = b.category_id AND c.disabled = 0
+			 WHERE b.month = (SELECT MAX(month) FROM budgets b2
 			                WHERE b2.category_id = b.category_id AND b2.month <= ?)`
 		)
 		.all(month) as { category_id: number; amount_cents: number }[];
@@ -57,11 +63,14 @@ function rolloverBalance(db: Database, categoryId: number, anchor: string, month
 	const budgetRows = db
 		.prepare('SELECT month, amount_cents FROM budgets WHERE category_id = ? AND month <= ? ORDER BY month')
 		.all(categoryId, prev) as { month: string; amount_cents: number }[];
+	// Refunds net against spend here too — otherwise a returned charge shrinks the
+	// rollover balance forever, since it's a running total (#24). A rollover
+	// anchor only ever lives on an expense Category, so netting all signs is safe.
 	const spentRows = db
 		.prepare(
 			`SELECT substr(date, 1, 7) AS month, SUM(-amount_cents) AS spent
 			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
+			 WHERE is_investment_activity = 0 AND is_transfer = 0
 			   AND category_id = ? AND date >= ? AND date < ?
 			 GROUP BY month`
 		)

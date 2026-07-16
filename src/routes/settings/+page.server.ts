@@ -18,6 +18,7 @@ import { householdContextBlock } from '$lib/server/assistant';
 import { setSecret, deleteSecret } from '$lib/server/keychain';
 import { WIDGETS, readLayout, saveLayout, readSidebar, saveSidebar } from '$lib/server/dashboard';
 import { splitDisplayName } from '$lib/server/split-usage';
+import { localToday } from '$lib/server/balances';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -50,18 +51,24 @@ export const load: PageServerLoad = ({ url }) => {
 			 ORDER BY m.plaid_key`
 		)
 		.all() as { plaid_key: string; category_id: number; category_name: string }[];
+	const thisYear = Number(localToday().slice(0, 4));
 	const plans529 = (
 		db.prepare("SELECT id, name FROM accounts WHERE subtype = '529' ORDER BY id").all() as {
 			id: number;
 			name: string;
 		}[]
-	).map((a) => ({
-		...a,
-		beneficiary: (setting(`529_${a.id}_name`) as string) ?? '',
-		age: (setting(`529_${a.id}_age`) as string) ?? '',
-		target_dollars: (setting(`529_${a.id}_target_dollars`) as string) ?? '',
-		override_monthly_dollars: (setting(`529_${a.id}_override_monthly_dollars`) as string) ?? ''
-	}));
+	).map((a) => {
+		// stored as a birth year (#14); the form still shows "Age today" derived
+		// from the current year, but persisting the year keeps it stable
+		const birthYear = setting(`529_${a.id}_birth_year`) as string | undefined;
+		return {
+			...a,
+			beneficiary: (setting(`529_${a.id}_name`) as string) ?? '',
+			age: birthYear ? String(thisYear - Number(birthYear)) : '',
+			target_dollars: (setting(`529_${a.id}_target_dollars`) as string) ?? '',
+			override_monthly_dollars: (setting(`529_${a.id}_override_monthly_dollars`) as string) ?? ''
+		};
+	});
 	const assumedReturn = (setting('assumed_return_pct') as string) ?? '5';
 
 	// what each scan button would touch — same SQL shape as runBackfill, so the
@@ -220,7 +227,9 @@ export const actions: Actions = {
 			const target = num('target_dollars');
 			const override = num('override_monthly_dollars');
 			putSetting(`529_${id}_name`, ((f.get('beneficiary') as string) ?? '').trim());
-			if (age != null) putSetting(`529_${id}_age`, String(age));
+			// persist a birth year so the college year stays anchored to the child (#14)
+			if (age != null)
+				putSetting(`529_${id}_birth_year`, String(Number(localToday().slice(0, 4)) - age));
 			if (target != null) putSetting(`529_${id}_target_dollars`, String(target));
 			if (override != null) putSetting(`529_${id}_override_monthly_dollars`, String(override));
 			else db.prepare('DELETE FROM settings WHERE key = ?').run(`529_${id}_override_monthly_dollars`);

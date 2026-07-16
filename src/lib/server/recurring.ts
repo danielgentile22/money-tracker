@@ -74,11 +74,18 @@ export function detectRecurring(txns: RecurringTxn[], knobs: RecurringKnobs): Se
 
 		const amounts = occ.map((t) => -t.amount_cents);
 		const typical = median(amounts);
-		// all but the latest must hold amount tolerance — the latest may drift,
-		// that drift IS the subscription-creep signal (P2.5)
-		const stable = amounts
-			.slice(0, -1)
-			.every((a) => Math.abs(a - typical) <= typical * knobs.amountTolerance);
+		const last = amounts[amounts.length - 1];
+		// Stable = holds one price, or steps once to a new price that persists.
+		// Any occurrences off the typical must form a single trailing run clustered
+		// at the latest amount — a real price hike (>tolerance, ≥2 bills) keeps the
+		// series alive instead of self-expiring; that drift IS the creep signal
+		// (#12, P2.5). Mid-series jitter still reads as erratic and drops the series.
+		const off = amounts.filter((a) => Math.abs(a - typical) > typical * knobs.amountTolerance);
+		const firstOff = amounts.findIndex((a) => Math.abs(a - typical) > typical * knobs.amountTolerance);
+		const stable =
+			off.length === 0 ||
+			(firstOff === amounts.length - off.length && // the off-typical bills are the trailing run
+				off.every((a) => Math.abs(a - last) <= last * knobs.amountTolerance)); // all at the new price
 		if (!stable) continue;
 
 		series.push({

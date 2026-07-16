@@ -84,7 +84,9 @@ test('trend is 12 zero-filled months of spending ending at the cursor month', ()
 	expect(trend[9]).toEqual({ month: '2026-05', spent_cents: 5_000 });
 });
 
-test('trend counts spending only — transfers and refunds stay out', () => {
+// Transfers never count; refunds net against spend (#24) so the trend matches
+// the netted actual shown on the same panel.
+test('trend excludes transfers and nets refunds against spend', () => {
 	const db = makeDb();
 	spend(db, 'Groceries', '2026-07-03', 10_000);
 	db.prepare(
@@ -95,7 +97,7 @@ test('trend counts spending only — transfers and refunds stay out', () => {
 		`INSERT INTO transactions (account_id, plaid_transaction_id, date, name, amount_cents, category_id)
 		 VALUES (1, 'cd-rf', '2026-07-06', 'refund', 3_000, (SELECT id FROM categories WHERE name = 'Groceries'))`
 	).run();
-	expect(detail(db, 'Groceries')!.trend[11].spent_cents).toBe(10_000);
+	expect(detail(db, 'Groceries')!.trend[11].spent_cents).toBe(7_000); // $100 − $30 refund
 });
 
 // ---------- recurring association ----------
@@ -128,4 +130,14 @@ test('a long-silent series still shows, as ended', () => {
 	series(db, 'instacart', '2026-03-05'); // ~4 monthly cycles missed by TODAY
 	spend(db, 'Groceries', '2026-03-05', 1_500, 'instacart');
 	expect(detail(db, 'Groceries')!.series[0].state).toBe('ended');
+});
+
+// #03: series merchants are stored lowercased, but real (Plaid) transaction
+// merchants keep their case — the join must be case-insensitive.
+test('mixed-case transaction merchant still associates its lowercased series', () => {
+	const db = makeDb();
+	series(db, 'netflix', '2026-07-05');
+	spend(db, 'Subscriptions', '2026-05-05', 1_500, 'Netflix');
+	spend(db, 'Subscriptions', '2026-06-05', 1_500, 'Netflix');
+	expect(detail(db, 'Subscriptions')!.series.map((s) => s.merchant)).toEqual(['netflix']);
 });

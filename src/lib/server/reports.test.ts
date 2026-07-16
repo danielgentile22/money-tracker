@@ -78,7 +78,25 @@ test('monthly series is zero-filled over the resolved range, totals hand-checked
 		{ month: '2026-06', total_cents: 0 },
 		{ month: '2026-07', total_cents: 4_000 }
 	]);
-	expect(r.stats).toEqual({ total_cents: 14_000, monthly_avg_cents: 4_667, txn_count: 3 });
+	// avg is over the two COMPLETE months (May+June = $100), not the partial July:
+	// $10,000 / 2 = $5,000, never $14,000 / 3 (#65). total still spans the range.
+	expect(r.stats).toEqual({ total_cents: 14_000, monthly_avg_cents: 5_000, txn_count: 3 });
+});
+
+// #65: early in the month the partial current-month spend must not drag the
+// average down — a range with one complete month averages over that month only.
+test('monthly average excludes the in-progress month', () => {
+	const db = makeDb();
+	insert(db, [
+		{ date: '2026-06-15', amount_cents: -30_000, category: 'Dining' }, // one full month
+		{ date: '2026-07-02', amount_cents: -1_000, category: 'Dining' } // barely into July
+	]);
+	const r = reportData(db, { date: { preset: 'last-3-months' } }, 'spending', 'category', {
+		today: TODAY // 2026-07-04 → May, June (complete) + partial July
+	});
+	// $30k over the two complete months (May 0 + June 30k), July's partial $1k
+	// excluded: $15,000 — not the biased $31k / 3 = $10,333.
+	expect(r.stats.monthly_avg_cents).toBe(15_000);
 });
 
 test('income vs spending sign discipline; Transfers and investment rows never count', () => {

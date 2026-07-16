@@ -79,6 +79,18 @@ test('fee severity rises with amount', () => {
 	expect(small.severity).toBeLessThan(big.severity);
 });
 
+// #13: a month-end fee synced after rollover (dated last month, arriving this
+// month) must still fire — the trailing window covers it, the old calendar-month
+// filter dropped it.
+test('a fee dated late last month still fires after rollover', () => {
+	const db = makeDb();
+	const fee = insert(db, { amount_cents: -3_500, category: 'Fees', merchant: 'bank', date: '2026-06-30' });
+	runDetectors(db, TODAY); // TODAY = 2026-07-04
+	const fired = byDetector(db, 'fees-interest');
+	expect(fired).toHaveLength(1);
+	expect(fired[0].subject).toBe(`txn:${fee}`);
+});
+
 // --- large one-off ---
 
 test('large one-off fires at the $500 default floor; a just-below twin does not', () => {

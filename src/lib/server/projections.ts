@@ -40,16 +40,27 @@ export function runRateProjection(db: Database, today: string): RunRate | Insuff
 	const baseAvg = Math.round(nets.reduce((a, b) => a + b, 0) / 3);
 
 	// recurring price changes not yet fully absorbed by the trailing average:
-	// each series keeps billing its latest amount, the average embeds its typical
+	// each series keeps billing its latest amount, the average embeds its typical.
+	// But any new-price bills ALREADY inside the window are partly in baseAvg, so
+	// carrying the full (last − typical) double counts them (#52). Discount by the
+	// new-price occurrences in the window: (monthlyize − n_new/3) — a fully
+	// caught-up series (n_new = 3·monthlyize) contributes nothing.
 	const changed = db
 		.prepare(
-			'SELECT merchant, cadence, typical_amount_cents, last_amount_cents FROM recurring_series WHERE last_amount_cents != typical_amount_cents'
+			`SELECT rs.merchant, rs.cadence, rs.typical_amount_cents, rs.last_amount_cents,
+			   (SELECT COUNT(*) FROM transactions t
+			    WHERE t.recurring_series_id = rs.id AND -t.amount_cents = rs.last_amount_cents
+			      AND t.date >= ? AND t.date < ?) AS n_new
+			 FROM recurring_series rs WHERE rs.last_amount_cents != rs.typical_amount_cents`
 		)
-		.all() as { merchant: string; cadence: string; typical_amount_cents: number; last_amount_cents: number }[];
+		.all(`${window[0]}-01`, `${month}-01`) as {
+		merchant: string; cadence: string; typical_amount_cents: number; last_amount_cents: number; n_new: number;
+	}[];
 	const delta =
 		-Math.round(
 			changed.reduce(
-				(sum, s) => sum + (s.last_amount_cents - s.typical_amount_cents) * (MONTHLYIZE[s.cadence] ?? 1),
+				(sum, s) =>
+					sum + (s.last_amount_cents - s.typical_amount_cents) * ((MONTHLYIZE[s.cadence] ?? 1) - s.n_new / 3),
 				0
 			)
 		) || 0; // never −0
@@ -164,25 +175,32 @@ export type Counterfactual = {
 export function counterfactual(db: Database): Counterfactual {
 	const rows = db
 		.prepare(
-			`SELECT id, detector, title, figures FROM concerns
+			`SELECT id, detector, title, figures, subject FROM concerns
 			 WHERE status = 'active' AND detector IN ('budget-overage', 'spend-spike')
 			 ORDER BY severity DESC`
 		)
-		.all() as { id: number; detector: string; title: string; figures: string }[];
+		.all() as { id: number; detector: string; title: string; figures: string; subject: string }[];
 	const lines = rows.map((r) => {
 		const f = JSON.parse(r.figures) as Record<string, number>;
 		const overage =
 			r.detector === 'budget-overage' ? f.overage_cents : f.mtd_cents - f.avg_cents;
-		return { concern_id: r.id, detector: r.detector, title: r.title, overage_cents: overage };
+		return { concern_id: r.id, detector: r.detector, title: r.title, subject: r.subject, overage_cents: overage };
 	});
-	const monthly = lines.reduce((s, l) => s + l.overage_cents, 0);
+	// budget-overage and spend-spike both key on `category:<id>` and describe
+	// largely the same dollars — a spike usually causes the overage. Counting
+	// both would inflate the total up to 2×, so the total keeps only the larger
+	// overage per subject; the lines still list both for the owner (#15).
+	const maxBySubject = new Map<string, number>();
+	for (const l of lines)
+		maxBySubject.set(l.subject, Math.max(maxBySubject.get(l.subject) ?? 0, l.overage_cents));
+	const monthly = [...maxBySubject.values()].reduce((s, v) => s + v, 0);
 	return {
 		monthly_cents: monthly,
 		annual_cents: monthly * 12,
-		lines,
+		lines: lines.map(({ subject: _subject, ...l }) => l),
 		assumptions: [
 			"Assumes this month's flagged overages repeat every month.",
-			'Sums active budget-overage and spend-spike Concerns only — dismissing one there removes it here.'
+			'Sums active budget-overage and spend-spike Concerns only, deduplicated per category — dismissing one there removes it here.'
 		]
 	};
 }
@@ -223,9 +241,12 @@ export function plans529(db: Database, today: string): (Plan529 | NeedsSetup529)
 	const todayYear = Number(today.slice(0, 4));
 
 	return accounts.map((a) => {
-		const age = Number(setting(db, `529_${a.id}_age`));
+		// Age is derived from a stored birth year so the college year stays fixed
+		// to the child across calendar years (#14) — never re-entered annually.
+		const birthYear = Number(setting(db, `529_${a.id}_birth_year`));
+		const age = todayYear - birthYear;
 		const targetDollars = Number(setting(db, `529_${a.id}_target_dollars`));
-		if (!Number.isFinite(age) || !(targetDollars > 0))
+		if (!Number.isFinite(birthYear) || !(targetDollars > 0))
 			return { needsSetup: true, account_id: a.id, account_name: a.name };
 		const overrideDollars = Number(setting(db, `529_${a.id}_override_monthly_dollars`));
 		const hasOverride = Number.isFinite(overrideDollars) && overrideDollars >= 0;

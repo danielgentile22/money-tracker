@@ -80,6 +80,31 @@ test('annual and weekly deltas are monthly-ized', () => {
 	expect(p.recurring_delta_cents).toBe(-300);
 });
 
+// #52: a new-price bill already inside the trailing window is partly embedded in
+// baseAvg — carrying the full (last − typical) would double count it. One of the
+// three window bills at the new price discounts the delta to two-thirds.
+test('a price change already in the window is not double counted', () => {
+	const db = makeDb();
+	seedThreeMonths(db);
+	const seriesId = db
+		.prepare(
+			`INSERT INTO recurring_series (merchant, cadence, typical_amount_cents, last_amount_cents, first_seen, last_seen)
+			 VALUES ('netflix', 'monthly', 999, 1299, '2026-01-15', '2026-06-15') RETURNING id`
+		)
+		.pluck()
+		.get() as number;
+	// one member bill at the NEW price lands inside the Apr–Jun window
+	db.prepare(
+		`INSERT INTO transactions (account_id, plaid_transaction_id, date, name, merchant, amount_cents, recurring_series_id)
+		 VALUES (1, 'nf-jun', '2026-06-15', 'Netflix', 'netflix', -1299, ?)`
+	).run(seriesId);
+
+	const p = runRateProjection(db, TODAY);
+	if (p.insufficient) throw new Error('unexpected insufficient');
+	// (1299 − 999) × (1 − 1/3) = 300 × 2/3 = 200 → −$2.00/mo, not the full −$3.00
+	expect(p.recurring_delta_cents).toBe(-200);
+});
+
 test('below 3 full months the Projection declares itself insufficient', () => {
 	const db = makeDb();
 	txn(db, '2026-06-01', 300_000);
@@ -144,8 +169,8 @@ test('529 contribution rate derives from one-sided saved legs, split across acco
 		 VALUES (1, 'paired', '2026-06-20', 'TRANSFER', 'transfer', -99_000, 1, 1, 1)`
 	).run();
 	for (const [k, v] of [
-		['529_2_name', 'Alice'], ['529_2_age', '16'], ['529_2_target_dollars', '20000'],
-		['529_3_name', 'Beth'], ['529_3_age', '10'], ['529_3_target_dollars', '20000']
+		['529_2_name', 'Alice'], ['529_2_birth_year', '2010'], ['529_2_target_dollars', '20000'], // age 16 in 2026
+		['529_3_name', 'Beth'], ['529_3_birth_year', '2016'], ['529_3_target_dollars', '20000'] // age 10
 	])
 		db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(k, v);
 
@@ -165,7 +190,7 @@ test('529 manual override beats detection and is named in the assumptions', () =
 	).run();
 	txn(db, '2026-03-20', 100_000);
 	for (const [k, v] of [
-		['529_2_name', 'Alice'], ['529_2_age', '16'], ['529_2_target_dollars', '20000'],
+		['529_2_name', 'Alice'], ['529_2_birth_year', '2010'], ['529_2_target_dollars', '20000'],
 		['529_2_override_monthly_dollars', '250']
 	])
 		db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(k, v);
@@ -185,6 +210,27 @@ test('unconfigured 529 Accounts surface as needsSetup prompts, never empty chart
 	).run();
 	const plans = plans529(db, TODAY);
 	expect(plans).toEqual([{ needsSetup: true, account_id: 2, account_name: '529 Alice' }]);
+});
+
+// #14: a fixed birth year keeps the college year anchored to the child — it must
+// NOT drift a year later every calendar year (the bug with a static "age today").
+test('529 college year is stable across calendar years (no drift)', () => {
+	const db = makeDb();
+	db.prepare(
+		"INSERT INTO accounts (connection_id, plaid_account_id, name, type, subtype, current_balance_cents) VALUES (1, 'p1', '529 Alice', 'investment', '529', 1_000_000)"
+	).run();
+	for (const [k, v] of [
+		['529_2_name', 'Alice'], ['529_2_birth_year', '2016'], ['529_2_target_dollars', '20000'] // college at 18 = 2034
+	])
+		db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(k, v);
+
+	const collegeYear = (today: string) => {
+		const p = plans529(db, today)[0];
+		if ('needsSetup' in p) throw new Error('unexpected needsSetup');
+		return p.college_year;
+	};
+	expect(collegeYear('2026-07-15')).toBe(2034);
+	expect(collegeYear('2028-01-01')).toBe(2034); // two years later, same college year
 });
 
 // --- counterfactual savings ---
@@ -218,4 +264,24 @@ test('counterfactual sums only active overage-type Concerns, annualized; dismiss
 	const empty = counterfactual(makeDb());
 	expect(empty.lines).toEqual([]);
 	expect(empty.monthly_cents).toBe(0);
+});
+
+// #15: a category that trips BOTH detectors describes the same dollars twice —
+// the total keeps only the larger overage, though both lines still show.
+test('counterfactual dedupes overlapping overage + spike on the same category', () => {
+	const db = makeDb();
+	upsertConcerns(db, [
+		{
+			detector: 'budget-overage', subject: 'category:5', period: '2026-07', severity: 50,
+			title: 'Dining over', figures: { target_cents: 40_000, actual_cents: 52_000, overage_cents: 12_000 }, txn_ids: []
+		},
+		{
+			detector: 'spend-spike', subject: 'category:5', period: '2026-07', severity: 40,
+			title: 'Dining spiking', figures: { mtd_cents: 52_000, avg_cents: 41_000, ratio: 1.27 }, txn_ids: []
+		}
+	]);
+	const c = counterfactual(db);
+	expect(c.lines).toHaveLength(2); // both still listed
+	expect(c.monthly_cents).toBe(12_000); // max(12,000, 11,000), not 23,000
+	expect(c.annual_cents).toBe(144_000);
 });

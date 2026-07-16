@@ -136,6 +136,36 @@ test('spending by Category: spend only, Transfers and income never included', ()
 	]);
 });
 
+// #24: a refund posted to an expense Category nets against that Category's
+// spend, and reconciles with monthSummary — it never counts as income.
+test('refund in an expense Category nets against spend and reconciles cash flow', () => {
+	const db = makeDb();
+	insert(db, [
+		{ date: '2026-06-02', amount_cents: -20_000, category: 'Shopping' }, // $200 purchase
+		{ date: '2026-06-20', amount_cents: 8_000, category: 'Shopping' }, // $80 return
+		{ date: '2026-06-01', amount_cents: 500_000, category: 'Income' } // paycheck
+	]);
+	// spend nets: $200 − $80 = $120
+	expect(spendingByCategory(db, '2026-06')).toEqual([
+		{ category_id: expect.any(Number), name: 'Shopping', spent_cents: 12_000 }
+	]);
+	const s = monthSummary(db, '2026-06');
+	expect(s.income_cents).toBe(500_000); // refund is NOT income
+	expect(s.expenses_cents).toBe(12_000); // refund reduced expenses
+	expect(s.cash_flow_cents).toBe(488_000);
+});
+
+// #24: an uncategorized positive stays income — netting is only for real
+// expense Categories, not blind across every positive row.
+test('uncategorized positive stays income, not a refund', () => {
+	const db = makeDb();
+	insert(db, [{ date: '2026-06-06', amount_cents: 12_345 }]); // no category
+	const s = monthSummary(db, '2026-06');
+	expect(s.income_cents).toBe(12_345);
+	expect(s.expenses_cents).toBe(0);
+	expect(spendingByCategory(db, '2026-06')).toEqual([]);
+});
+
 test('Category trend: one point per month over the window, zero-filled gaps', () => {
 	const db = makeDb();
 	insert(db, [

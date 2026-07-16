@@ -30,12 +30,17 @@ const TREND_MONTHS = 12;
 // its Ledger still shows the paychecks. Extend to income if the owner asks.
 function spendingTrend(db: Database, categoryId: number, month: string): TrendPoint[] {
 	const from = shiftMonth(month, -(TREND_MONTHS - 1));
+	// Refunds net against spend; the `g.name != 'Income'` guard keeps an Income
+	// Category's trend at zero (its paychecks aren't spend) — same as before (#24).
 	const rows = db
 		.prepare(
-			`SELECT substr(date, 1, 7) AS month, SUM(-amount_cents) AS spent
-			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
-			   AND category_id = ? AND date >= ? AND date < ?
+			`SELECT substr(t.date, 1, 7) AS month, SUM(-t.amount_cents) AS spent
+			 FROM transactions t
+			 LEFT JOIN categories c ON c.id = t.category_id
+			 LEFT JOIN category_groups g ON g.id = c.group_id
+			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
+			   AND (t.amount_cents < 0 OR (c.id IS NOT NULL AND g.name != 'Income'))
+			   AND t.category_id = ? AND t.date >= ? AND t.date < ?
 			 GROUP BY month`
 		)
 		.all(categoryId, `${from}-01`, `${shiftMonth(month, 1)}-01`) as { month: string; spent: number }[];
@@ -53,7 +58,7 @@ function associatedSeries(db: Database, categoryId: number, today: string): Seri
 			`SELECT id, merchant, cadence, typical_amount_cents, last_amount_cents, first_seen, last_seen
 			 FROM recurring_series rs
 			 WHERE ? = (SELECT t.category_id FROM transactions t
-			            WHERE t.merchant = rs.merchant AND t.category_id IS NOT NULL
+			            WHERE t.merchant = rs.merchant COLLATE NOCASE AND t.category_id IS NOT NULL
 			            GROUP BY t.category_id ORDER BY COUNT(*) DESC, t.category_id LIMIT 1)`
 		)
 		.all(categoryId) as SeriesRow[];

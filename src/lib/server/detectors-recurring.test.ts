@@ -97,6 +97,18 @@ test('a genuine double-tap fires; a gap beyond the window does not', () => {
 	expect(JSON.parse(fired[0].txn_ids)).toHaveLength(2);
 });
 
+// #13: a duplicate pair straddling month end (both dated last month) synced
+// after rollover still fires — the second charge is inside the trailing window.
+test('a month-end duplicate pair fires after rollover', () => {
+	const db = makeDb();
+	charge(db, 'gym', '2026-06-29', -4_500);
+	charge(db, 'gym', '2026-06-30', -4_500); // 1 day apart, both last month
+	run(db); // TODAY = 2026-07-15
+	const fired = byDetector(db, 'duplicate-charge');
+	expect(fired).toHaveLength(1);
+	expect(fired[0].subject).toContain('gym');
+});
+
 test('a recurring bill is never a duplicate, even inside a widened window', () => {
 	const db = makeDb();
 	db.prepare("INSERT INTO settings (key, value) VALUES ('detector_duplicate-charge_window', '7')").run();
