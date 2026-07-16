@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
 import { compileFilters, resolveDateRange, type FilterSet } from './filters';
-import { monthRange } from './analytics';
+import { monthRange, shiftMonth } from './analytics';
 import { localToday, netWorthSeries, type SeriesPoint } from './balances';
 import { queryLedger, type LedgerRow } from './ledger';
 
@@ -133,12 +133,32 @@ export function reportData(
 		offset: ((opts.page ?? 1) - 1) * pageSize
 	});
 
+	// The monthly average must span only COMPLETE months: not the in-progress
+	// current month, and not a month the resolved range clips at either end
+	// (a custom mid-month from/to). Sum just those months' spend over their
+	// count, so neither numerator nor divisor is contaminated by partial data
+	// (#65). Fall back to the raw mean when no month is complete.
+	const { from, to } = resolveDateRange(f.date, today);
+	const thisMonth = today.slice(0, 7);
+	// last calendar day of month m (day before the next month's first)
+	const monthEnd = (m: string) =>
+		new Date(Date.parse(`${shiftMonth(m, 1)}-01`) - 86_400_000).toISOString().slice(0, 10);
+	const monthComplete = (m: string) =>
+		m < thisMonth && // not the in-progress month
+		(!from || from <= `${m}-01`) && // range doesn't clip the month's start
+		(!to || to >= monthEnd(m)); // range covers through the month's end
+	const completeMonths = months.filter(monthComplete);
+	const completeTotal = completeMonths.reduce((s, m) => s + (byMonth.get(m) ?? 0), 0);
+	const monthly_avg_cents = completeMonths.length
+		? Math.round(completeTotal / completeMonths.length)
+		: Math.round(stats.total_cents / Math.max(1, months.length));
+
 	return {
 		months: months.map((month) => ({ month, total_cents: byMonth.get(month) ?? 0 })),
 		breakdown,
 		stats: {
 			total_cents: stats.total_cents,
-			monthly_avg_cents: Math.round(stats.total_cents / months.length),
+			monthly_avg_cents,
 			txn_count: stats.txn_count
 		},
 		rows: rows.slice(0, pageSize),

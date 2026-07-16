@@ -21,7 +21,7 @@ function makeDb() {
 	).run();
 	// 529 setup: beneficiary's name is identity and must never leave the machine
 	db.prepare("INSERT INTO settings (key, value) VALUES ('529_2_name', 'LeakyName')").run();
-	db.prepare("INSERT INTO settings (key, value) VALUES ('529_2_age', '10')").run();
+	db.prepare("INSERT INTO settings (key, value) VALUES ('529_2_birth_year', '2016')").run(); // age 10 in 2026
 	db.prepare("INSERT INTO settings (key, value) VALUES ('529_2_target_dollars', '100000')").run();
 	db.prepare("INSERT INTO settings (key, value) VALUES ('529_2_override_monthly_dollars', '500')").run();
 

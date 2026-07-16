@@ -151,6 +151,23 @@ test('rollover: $0 at the anchor month, then budget−actual accumulates, surplu
 	expect(lineOf(budgetMonth(db, '2026-03'), 'Groceries').rollover_cents).toBeNull();
 });
 
+// #24: a refund the month after a purchase nets in the rollover balance instead
+// of shrinking it forever (the balance is a running total).
+test('rollover: a refund nets against spend and does not permanently skew the balance', () => {
+	const db = makeDb();
+	const groceries = catId(db, 'Groceries');
+	setBudget(db, groceries, '2026-04', 50_000);
+	setRolloverAnchor(db, groceries, '2026-04');
+	spend(db, 'Groceries', '2026-04-10', 30_000); // $300 charge
+	earn(db, 'Groceries', '2026-05-05', 30_000); // fully refunded next month
+	// April surplus 20k enters May; May nets 50k budget − (−30k refund) = 80k avail
+	expect(lineOf(budgetMonth(db, '2026-05'), 'Groceries').rollover_cents).toBe(20_000);
+	const june = lineOf(budgetMonth(db, '2026-06'), 'Groceries');
+	// entering June: (50k−30k) + (50k−(−30k)) = 20k + 80k = 100k — the charge and
+	// its refund cancel, leaving two full untouched budgets
+	expect(june.rollover_cents).toBe(100_000);
+});
+
 test('rollover balance is frozen history: editing a later budget never moves it', () => {
 	const db = makeDb();
 	const groceries = catId(db, 'Groceries');
@@ -264,6 +281,22 @@ test('overage fires the day actual crosses the budget, updates as it grows', () 
 		actual_cents: 41_000,
 		overage_cents: 1_000
 	});
+});
+
+// #64: a budgeted Category later disabled must drop out of budgetStatus and the
+// over-budget detector — the owner can't see or clear it on /budgets, so it must
+// not raise phantom Concerns.
+test('a disabled Category leaves budgetStatus and stops firing overages', () => {
+	const db = makeDb();
+	setBudget(db, catId(db, 'Dining'), '2026-07', 10_000);
+	spend(db, 'Dining', '2026-07-03', 15_000);
+	runDetectors(db, TODAY);
+	expect(overages(db)).toHaveLength(1);
+
+	db.prepare("UPDATE categories SET disabled = 1 WHERE name = 'Dining'").run();
+	expect(budgetStatus(db, '2026-07')).toEqual([]);
+	runDetectors(db, TODAY);
+	expect(overages(db)).toHaveLength(0);
 });
 
 test('clearing the budget retires its Concern on the next run', () => {

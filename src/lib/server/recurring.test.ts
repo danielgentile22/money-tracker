@@ -92,6 +92,96 @@ test('the LATEST amount may exceed tolerance and stay in the series — that dri
 	expect(series[0].last_amount_cents).toBe(1_299);
 });
 
+// #12: a price hike that persists for more than one bill must not drop the
+// whole series (which would self-expire the subscription-creep concern).
+test('a raised price held for two+ bills keeps the series alive', () => {
+	const series = detectRecurring(
+		[
+			charge('netflix', '2026-03-15', -999),
+			charge('netflix', '2026-04-15', -999),
+			charge('netflix', '2026-05-15', -999),
+			charge('netflix', '2026-06-15', -1_299), // +30%, and it sticks
+			charge('netflix', '2026-07-15', -1_299)
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(1);
+	expect(series[0].typical_amount_cents).toBe(999);
+	expect(series[0].last_amount_cents).toBe(1_299);
+});
+
+// #12 (codex P1): once the new price is the MAJORITY the median flips to it —
+// the series must still survive, with typical anchored to the old price so the
+// creep detector keeps firing.
+test('a raised price that becomes the majority keeps the series (typical stays old)', () => {
+	const series = detectRecurring(
+		[
+			charge('netflix', '2026-01-15', -999),
+			charge('netflix', '2026-02-15', -999),
+			charge('netflix', '2026-03-15', -999),
+			charge('netflix', '2026-04-15', -1_299),
+			charge('netflix', '2026-05-15', -1_299),
+			charge('netflix', '2026-06-15', -1_299),
+			charge('netflix', '2026-07-15', -1_299) // 4 new vs 3 old → median is the new price
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(1);
+	expect(series[0].typical_amount_cents).toBe(999);
+	expect(series[0].last_amount_cents).toBe(1_299);
+});
+
+// #12 (codex re-review): a series whose bills all sit within tolerance of the
+// median is flat, even when the first/last land on opposite edges of the band.
+test('bills within tolerance of the median stay a flat series (edges included)', () => {
+	const series = detectRecurring(
+		[
+			charge('gym', '2026-03-01', -8_500),
+			charge('gym', '2026-04-01', -11_500),
+			charge('gym', '2026-05-01', -10_000),
+			charge('gym', '2026-06-01', -10_000),
+			charge('gym', '2026-07-01', -8_500) // all within 15% of $100 median
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(1);
+	expect(series[0].typical_amount_cents).toBe(10_000);
+});
+
+// #12 (codex re-review): even a modest rise that becomes the majority (so the
+// median is the new price) must be read as a step, keeping typical = old price.
+test('a small rise that becomes the majority still reads as a step (typical stays old)', () => {
+	const series = detectRecurring(
+		[
+			charge('news', '2026-01-10', -10_000),
+			charge('news', '2026-02-10', -10_000),
+			charge('news', '2026-03-10', -10_000),
+			charge('news', '2026-04-10', -12_100), // +21%, then holds as the majority
+			charge('news', '2026-05-10', -12_100),
+			charge('news', '2026-06-10', -12_100),
+			charge('news', '2026-07-10', -12_100)
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(1);
+	expect(series[0].typical_amount_cents).toBe(10_000);
+	expect(series[0].last_amount_cents).toBe(12_100);
+});
+
+// A jump in the middle that then reverts is noise, not a clean step → dropped.
+test('a one-off spike in the middle is still erratic', () => {
+	const series = detectRecurring(
+		[
+			charge('gym', '2026-03-01', -4_500),
+			charge('gym', '2026-04-01', -9_000), // spike
+			charge('gym', '2026-05-01', -4_500),
+			charge('gym', '2026-06-01', -4_500)
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(0);
+});
+
 test('annual series detected across leap-year-length gaps', () => {
 	const series = detectRecurring(
 		[

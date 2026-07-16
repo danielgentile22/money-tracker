@@ -15,6 +15,13 @@ export type MonthSummary = {
 	txn_count: number; // non-excluded rows backing income/expenses
 };
 
+// A row belongs to a real expense Category (has one, and it's not the Income
+// group). Positive such rows are refunds that net against spend (#24); rows
+// without a Category or in the Income group keep the plain sign discipline.
+// Requires the caller to alias transactions as `t` and LEFT JOIN categories c
+// / category_groups g.
+export const IS_EXPENSE_CAT = "(c.id IS NOT NULL AND g.name != 'Income')";
+
 /** [start, end) date bounds of a calendar month, year wrap included. */
 function monthBounds(month: string): { start: string; end: string } {
 	const [y, m] = month.split('-').map(Number);
@@ -24,15 +31,24 @@ function monthBounds(month: string): { start: string; end: string } {
 
 export function monthSummary(db: Database, month: string): MonthSummary {
 	const { start, end } = monthBounds(month);
+	// A positive row in a real expense Category is a refund, not income: it nets
+	// against that Category's spend and never counts toward income, so cash flow
+	// reconciles with the sum of Category actuals (#24). Uncategorized and
+	// Income-group positives stay income — refunds are only netted where they
+	// unambiguously reverse a categorized charge.
 	const row = db
 		.prepare(
 			`SELECT
-			   COALESCE(SUM(CASE WHEN is_transfer = 0 AND amount_cents > 0 THEN amount_cents END), 0) AS income,
-			   COALESCE(SUM(CASE WHEN is_transfer = 0 AND amount_cents < 0 THEN -amount_cents END), 0) AS expenses,
-			   COALESCE(SUM(CASE WHEN is_saved = 1 THEN ABS(amount_cents) END), 0) AS saved,
-			   COALESCE(SUM(is_transfer = 0), 0) AS txn_count
-			 FROM transactions
-			 WHERE is_investment_activity = 0 AND date >= ? AND date < ?`
+			   COALESCE(SUM(CASE WHEN t.is_transfer = 0 AND t.amount_cents > 0 AND NOT ${IS_EXPENSE_CAT}
+			                     THEN t.amount_cents END), 0) AS income,
+			   COALESCE(SUM(CASE WHEN t.is_transfer = 0 AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
+			                     THEN -t.amount_cents END), 0) AS expenses,
+			   COALESCE(SUM(CASE WHEN t.is_saved = 1 THEN ABS(t.amount_cents) END), 0) AS saved,
+			   COALESCE(SUM(t.is_transfer = 0), 0) AS txn_count
+			 FROM transactions t
+			 LEFT JOIN categories c ON c.id = t.category_id
+			 LEFT JOIN category_groups g ON g.id = c.group_id
+			 WHERE t.is_investment_activity = 0 AND t.date >= ? AND t.date < ?`
 		)
 		.get(start, end) as { income: number; expenses: number; saved: number; txn_count: number };
 	return {
@@ -51,11 +67,16 @@ export type CategorySpend = { category_id: number | null; name: string | null; s
 /** Spend magnitude per Category for one month; Transfers/income/investment rows never appear. */
 export function spendingByCategory(db: Database, month: string): CategorySpend[] {
 	const { start, end } = monthBounds(month);
+	// Refunds in an expense Category net against its spend; income/uncategorized
+	// positives are excluded, same as before (#24).
 	return db
 		.prepare(
 			`SELECT t.category_id, c.name, SUM(-t.amount_cents) AS spent_cents
-			 FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.amount_cents < 0
+			 FROM transactions t
+			 LEFT JOIN categories c ON c.id = t.category_id
+			 LEFT JOIN category_groups g ON g.id = c.group_id
+			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
+			   AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
 			   AND t.date >= ? AND t.date < ?
 			 GROUP BY t.category_id ORDER BY spent_cents DESC`
 		)
@@ -102,12 +123,17 @@ export type TrendPoint = { month: string; spent_cents: number };
 
 /** Monthly spend for one Category over [from, to] months, zero-filled so gaps are visible. */
 export function categoryTrend(db: Database, categoryId: number, from: string, to: string): TrendPoint[] {
+	// Refunds net against the Category's spend (#24); for an Income-group
+	// Category the predicate reduces to negatives-only, as before.
 	const rows = db
 		.prepare(
-			`SELECT substr(date, 1, 7) AS month, SUM(-amount_cents) AS spent_cents
-			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
-			   AND category_id = ? AND date >= ? AND date < ?
+			`SELECT substr(t.date, 1, 7) AS month, SUM(-t.amount_cents) AS spent_cents
+			 FROM transactions t
+			 LEFT JOIN categories c ON c.id = t.category_id
+			 LEFT JOIN category_groups g ON g.id = c.group_id
+			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
+			   AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
+			   AND t.category_id = ? AND t.date >= ? AND t.date < ?
 			 GROUP BY month`
 		)
 		.all(categoryId, `${from}-01`, monthBounds(to).end) as TrendPoint[];

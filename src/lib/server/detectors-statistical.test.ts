@@ -67,6 +67,21 @@ test('spend spike fires at 1.5× trailing average above the $50 floor; 1.4× twi
 	expect(byDetector(db2, 'spend-spike')).toHaveLength(0);
 });
 
+// #24/codex-P2: a refund in a baseline month nets the trailing average down,
+// matching the netted current-month figure — so the ratio is net-vs-net.
+test('spend-spike baseline nets refunds, consistent with current-month spend', () => {
+	const db = makeDb();
+	seedHistory(db); // Dining gross avg $200/mo over Apr–Jun
+	insert(db, '2026-05-20', 6_000, { category: 'Dining' }); // $60 refund → May nets $140
+	// netted avg = (140 + 200 + 200)/3 = $180; $280 current is 1.56× → spikes,
+	// where against the un-netted $200 baseline it would be only 1.4× (silent)
+	insert(db, '2026-07-08', -28_000, { category: 'Dining' });
+	runDetectors(db, TODAY);
+	const fired = byDetector(db, 'spend-spike');
+	expect(fired).toHaveLength(1);
+	expect(JSON.parse(fired[0].figures)).toMatchObject({ mtd_cents: 28_000, avg_cents: 18_000 });
+});
+
 test('spend spike respects the $ floor: tiny categories never spike', () => {
 	const db = makeDb();
 	seedHistory(db);
