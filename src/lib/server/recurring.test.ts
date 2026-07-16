@@ -131,6 +131,23 @@ test('a raised price that becomes the majority keeps the series (typical stays o
 	expect(series[0].last_amount_cents).toBe(1_299);
 });
 
+// #12 (codex re-review): a series whose bills all sit within tolerance of the
+// median is flat, even when the first/last land on opposite edges of the band.
+test('bills within tolerance of the median stay a flat series (edges included)', () => {
+	const series = detectRecurring(
+		[
+			charge('gym', '2026-03-01', -8_500),
+			charge('gym', '2026-04-01', -11_500),
+			charge('gym', '2026-05-01', -10_000),
+			charge('gym', '2026-06-01', -10_000),
+			charge('gym', '2026-07-01', -8_500) // all within 15% of $100 median
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(1);
+	expect(series[0].typical_amount_cents).toBe(10_000);
+});
+
 // A jump in the middle that then reverts is noise, not a clean step → dropped.
 test('a one-off spike in the middle is still erratic', () => {
 	const series = detectRecurring(

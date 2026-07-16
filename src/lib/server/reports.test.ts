@@ -99,6 +99,25 @@ test('monthly average excludes the in-progress month', () => {
 	expect(r.stats.monthly_avg_cents).toBe(15_000);
 });
 
+// codex re-review: a custom range clipped mid-month excludes that partial month
+// from the average at BOTH ends, not just the current month.
+test('monthly average excludes a month the custom range clips mid-month', () => {
+	const db = makeDb();
+	insert(db, [
+		{ date: '2026-05-20', amount_cents: -8_000, category: 'Dining' }, // May: clipped by from
+		{ date: '2026-06-10', amount_cents: -30_000, category: 'Dining' } // June: fully covered
+	]);
+	// from mid-May through end of June: only June is a complete, fully-covered month
+	const r = reportData(
+		db,
+		{ date: { from: '2026-05-15', to: '2026-06-30' } },
+		'spending',
+		'category',
+		{ today: TODAY }
+	);
+	expect(r.stats.monthly_avg_cents).toBe(30_000); // June only; partial May excluded
+});
+
 test('income vs spending sign discipline; Transfers and investment rows never count', () => {
 	const db = makeDb();
 	insert(db, [

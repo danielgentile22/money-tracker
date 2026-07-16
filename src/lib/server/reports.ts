@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
 import { compileFilters, resolveDateRange, type FilterSet } from './filters';
-import { monthRange } from './analytics';
+import { monthRange, shiftMonth } from './analytics';
 import { localToday, netWorthSeries, type SeriesPoint } from './balances';
 import { queryLedger, type LedgerRow } from './ledger';
 
@@ -140,11 +140,13 @@ export function reportData(
 	// (#65). Fall back to the raw mean when no month is complete.
 	const { from, to } = resolveDateRange(f.date, today);
 	const thisMonth = today.slice(0, 7);
-	const toMonth = to?.slice(0, 7);
+	// last calendar day of month m (day before the next month's first)
+	const monthEnd = (m: string) =>
+		new Date(Date.parse(`${shiftMonth(m, 1)}-01`) - 86_400_000).toISOString().slice(0, 10);
 	const monthComplete = (m: string) =>
 		m < thisMonth && // not the in-progress month
 		(!from || from <= `${m}-01`) && // range doesn't clip the month's start
-		(!toMonth || toMonth > m); // range extends past the month's end
+		(!to || to >= monthEnd(m)); // range covers through the month's end
 	const completeMonths = months.filter(monthComplete);
 	const completeTotal = completeMonths.reduce((s, m) => s + (byMonth.get(m) ?? 0), 0);
 	const monthly_avg_cents = completeMonths.length
