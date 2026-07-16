@@ -133,21 +133,30 @@ export function reportData(
 		offset: ((opts.page ?? 1) - 1) * pageSize
 	});
 
-	// The in-progress month holds only partial spend; counting it as a full month
-	// in the divisor biased the headline average low whenever the range runs to
-	// today (the default). Average over complete months only (#65).
+	// The monthly average must span only COMPLETE months: not the in-progress
+	// current month, and not a month the resolved range clips at either end
+	// (a custom mid-month from/to). Sum just those months' spend over their
+	// count, so neither numerator nor divisor is contaminated by partial data
+	// (#65). Fall back to the raw mean when no month is complete.
+	const { from, to } = resolveDateRange(f.date, today);
 	const thisMonth = today.slice(0, 7);
-	const fullMonths = months.filter((m) => m < thisMonth);
-	const avgTotal =
-		fullMonths.length > 0 ? stats.total_cents - (byMonth.get(thisMonth) ?? 0) : stats.total_cents;
-	const avgDivisor = Math.max(1, fullMonths.length || months.length);
+	const toMonth = to?.slice(0, 7);
+	const monthComplete = (m: string) =>
+		m < thisMonth && // not the in-progress month
+		(!from || from <= `${m}-01`) && // range doesn't clip the month's start
+		(!toMonth || toMonth > m); // range extends past the month's end
+	const completeMonths = months.filter(monthComplete);
+	const completeTotal = completeMonths.reduce((s, m) => s + (byMonth.get(m) ?? 0), 0);
+	const monthly_avg_cents = completeMonths.length
+		? Math.round(completeTotal / completeMonths.length)
+		: Math.round(stats.total_cents / Math.max(1, months.length));
 
 	return {
 		months: months.map((month) => ({ month, total_cents: byMonth.get(month) ?? 0 })),
 		breakdown,
 		stats: {
 			total_cents: stats.total_cents,
-			monthly_avg_cents: Math.round(avgTotal / avgDivisor),
+			monthly_avg_cents,
 			txn_count: stats.txn_count
 		},
 		rows: rows.slice(0, pageSize),

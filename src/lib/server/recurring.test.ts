@@ -110,6 +110,27 @@ test('a raised price held for two+ bills keeps the series alive', () => {
 	expect(series[0].last_amount_cents).toBe(1_299);
 });
 
+// #12 (codex P1): once the new price is the MAJORITY the median flips to it —
+// the series must still survive, with typical anchored to the old price so the
+// creep detector keeps firing.
+test('a raised price that becomes the majority keeps the series (typical stays old)', () => {
+	const series = detectRecurring(
+		[
+			charge('netflix', '2026-01-15', -999),
+			charge('netflix', '2026-02-15', -999),
+			charge('netflix', '2026-03-15', -999),
+			charge('netflix', '2026-04-15', -1_299),
+			charge('netflix', '2026-05-15', -1_299),
+			charge('netflix', '2026-06-15', -1_299),
+			charge('netflix', '2026-07-15', -1_299) // 4 new vs 3 old → median is the new price
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(1);
+	expect(series[0].typical_amount_cents).toBe(999);
+	expect(series[0].last_amount_cents).toBe(1_299);
+});
+
 // A jump in the middle that then reverts is noise, not a clean step → dropped.
 test('a one-off spike in the middle is still erratic', () => {
 	const series = detectRecurring(

@@ -20,7 +20,7 @@ export type MonthSummary = {
 // without a Category or in the Income group keep the plain sign discipline.
 // Requires the caller to alias transactions as `t` and LEFT JOIN categories c
 // / category_groups g.
-const IS_EXPENSE_CAT = "(c.id IS NOT NULL AND g.name != 'Income')";
+export const IS_EXPENSE_CAT = "(c.id IS NOT NULL AND g.name != 'Income')";
 
 /** [start, end) date bounds of a calendar month, year wrap included. */
 function monthBounds(month: string): { start: string; end: string } {

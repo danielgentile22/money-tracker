@@ -73,20 +73,21 @@ export function detectRecurring(txns: RecurringTxn[], knobs: RecurringKnobs): Se
 		if (gaps.some((g) => g < lo - knobs.dayTolerance || g > hi + knobs.dayTolerance)) continue; // erratic
 
 		const amounts = occ.map((t) => -t.amount_cents);
-		const typical = median(amounts);
 		const last = amounts[amounts.length - 1];
+		const within = (a: number, ref: number) => Math.abs(a - ref) <= ref * knobs.amountTolerance;
 		// Stable = holds one price, or steps once to a new price that persists.
-		// Any occurrences off the typical must form a single trailing run clustered
-		// at the latest amount — a real price hike (>tolerance, ≥2 bills) keeps the
-		// series alive instead of self-expiring; that drift IS the creep signal
-		// (#12, P2.5). Mid-series jitter still reads as erratic and drops the series.
-		const off = amounts.filter((a) => Math.abs(a - typical) > typical * knobs.amountTolerance);
-		const firstOff = amounts.findIndex((a) => Math.abs(a - typical) > typical * knobs.amountTolerance);
-		const stable =
-			off.length === 0 ||
-			(firstOff === amounts.length - off.length && // the off-typical bills are the trailing run
-				off.every((a) => Math.abs(a - last) <= last * knobs.amountTolerance)); // all at the new price
-		if (!stable) continue;
+		// Peel off the trailing run clustered at the latest amount (the new price);
+		// the earlier bills must then hold a single old price. A real hike (≥1 new
+		// bill) keeps the series alive even once the new price is the majority —
+		// that step IS the subscription-creep signal (#12, P2.5). Mid-series jitter
+		// leaves an inconsistent prefix and drops the series as erratic.
+		let split = amounts.length;
+		while (split > 0 && within(amounts[split - 1], last)) split--;
+		const prefix = amounts.slice(0, split);
+		if (!prefix.every((a) => within(a, prefix[0]))) continue; // erratic old-price run
+		// typical stays the OLD price when a step exists, so the creep detector keeps
+		// comparing new-vs-old across the rebuild; a flat series takes the median.
+		const typical = prefix.length ? median(prefix) : median(amounts);
 
 		series.push({
 			merchant: occ[0].merchant.toLowerCase(),

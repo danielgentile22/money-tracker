@@ -1,5 +1,5 @@
 import type { Database } from 'better-sqlite3';
-import { monthSummary, spendingByCategory, fullMonthsOfHistory } from './analytics';
+import { monthSummary, spendingByCategory, fullMonthsOfHistory, IS_EXPENSE_CAT } from './analytics';
 import { budgetStatus } from './budgets';
 import { localToday } from './balances';
 import { upsertConcerns, expireConcerns, identityOf, type ConcernCandidate } from './concerns';
@@ -154,14 +154,19 @@ const spendSpike: DetectorDef = {
 	run(db, knobs, today) {
 		const month = today.slice(0, 7);
 		const floorCents = Math.round(knobs.floor * 100);
-		// trailing 3 full months, averaged per Category (missing months count as zero)
+		// trailing 3 full months, averaged per Category (missing months count as
+		// zero). Refunds net here too, so the baseline is net spend — matching the
+		// netted current-month figure from spendingByCategory (#24 consistency)
 		const avgRows = db
 			.prepare(
-				`SELECT category_id, SUM(-amount_cents) / 3.0 AS avg_cents
-				 FROM transactions
-				 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
-				   AND date >= ? AND date < ?
-				 GROUP BY category_id`
+				`SELECT t.category_id, SUM(-t.amount_cents) / 3.0 AS avg_cents
+				 FROM transactions t
+				 LEFT JOIN categories c ON c.id = t.category_id
+				 LEFT JOIN category_groups g ON g.id = c.group_id
+				 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
+				   AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
+				   AND t.date >= ? AND t.date < ?
+				 GROUP BY t.category_id`
 			)
 			.all(`${shiftMonth(month, -3)}-01`, `${month}-01`) as {
 			category_id: number | null;
