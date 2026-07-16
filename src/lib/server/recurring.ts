@@ -75,28 +75,27 @@ export function detectRecurring(txns: RecurringTxn[], knobs: RecurringKnobs): Se
 		const amounts = occ.map((t) => -t.amount_cents);
 		const within = (a: number, ref: number) => Math.abs(a - ref) <= ref * knobs.amountTolerance;
 		const clusterOk = (arr: number[]) => arr.every((a) => within(a, median(arr))); // arr non-empty
-		// Stable = holds one price (all bills cluster around the median, symmetric
-		// jitter tolerated), or steps once to a distinct new price that persists.
-		// A step splits into an old-price prefix and a new-price suffix (ending at
-		// the latest bill), each internally consistent, with medians > tolerance
-		// apart — that step IS the subscription-creep signal (#12, P2.5). typical
-		// stays the OLD price so the creep detector keeps comparing new-vs-old.
-		// A mid-series spike or lone outlier admits no clean split → dropped.
-		let typical: number;
-		if (clusterOk(amounts)) {
-			typical = median(amounts);
-		} else {
-			let stepAt = -1;
-			for (let p = 1; p < amounts.length; p++) {
-				const pre = amounts.slice(0, p);
-				const suf = amounts.slice(p);
-				if (clusterOk(pre) && clusterOk(suf) && !within(median(suf), median(pre))) {
-					stepAt = p;
-					break;
-				}
+		// Stable = steps once to a distinct new price, or holds one price. Look for
+		// a step FIRST: a split into an old-price prefix and a new-price suffix
+		// (ending at the latest bill), each internally consistent, with medians >
+		// tolerance apart — that step IS the subscription-creep signal (#12, P2.5),
+		// and typical must stay the OLD price so the creep detector keeps comparing
+		// new-vs-old even once the new price is the majority (its median would
+		// otherwise swallow the old price as mere jitter). Absent a clean step, a
+		// series that clusters around its median is flat. A mid-series spike or lone
+		// outlier is neither (no clean split, not median-tight) → dropped.
+		let typical = -1;
+		for (let p = 1; p < amounts.length; p++) {
+			const pre = amounts.slice(0, p);
+			const suf = amounts.slice(p);
+			if (clusterOk(pre) && clusterOk(suf) && !within(median(suf), median(pre))) {
+				typical = median(pre);
+				break;
 			}
-			if (stepAt < 0) continue; // no single clean step — erratic
-			typical = median(amounts.slice(0, stepAt));
+		}
+		if (typical < 0) {
+			if (!clusterOk(amounts)) continue; // no step and not median-tight — erratic
+			typical = median(amounts);
 		}
 
 		series.push({

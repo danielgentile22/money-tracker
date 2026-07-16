@@ -148,6 +148,26 @@ test('bills within tolerance of the median stay a flat series (edges included)',
 	expect(series[0].typical_amount_cents).toBe(10_000);
 });
 
+// #12 (codex re-review): even a modest rise that becomes the majority (so the
+// median is the new price) must be read as a step, keeping typical = old price.
+test('a small rise that becomes the majority still reads as a step (typical stays old)', () => {
+	const series = detectRecurring(
+		[
+			charge('news', '2026-01-10', -10_000),
+			charge('news', '2026-02-10', -10_000),
+			charge('news', '2026-03-10', -10_000),
+			charge('news', '2026-04-10', -12_100), // +21%, then holds as the majority
+			charge('news', '2026-05-10', -12_100),
+			charge('news', '2026-06-10', -12_100),
+			charge('news', '2026-07-10', -12_100)
+		],
+		KNOBS
+	);
+	expect(series).toHaveLength(1);
+	expect(series[0].typical_amount_cents).toBe(10_000);
+	expect(series[0].last_amount_cents).toBe(12_100);
+});
+
 // A jump in the middle that then reverts is noise, not a clean step → dropped.
 test('a one-off spike in the middle is still erratic', () => {
 	const series = detectRecurring(
