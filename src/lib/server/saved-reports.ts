@@ -45,9 +45,11 @@ export function getReport(db: Database, id: number): SavedReport | null {
 export function renameReport(db: Database, id: number, newName: string): void {
 	const name = newName.trim();
 	if (!name) throw new Error('name required');
-	db.prepare('UPDATE saved_reports SET name = ? WHERE id = ?').run(name, id);
+	if (db.prepare('UPDATE saved_reports SET name = ? WHERE id = ?').run(name, id).changes === 0)
+		throw new Error('no such saved report');
 }
 
-export function deleteReport(db: Database, id: number): void {
-	db.prepare('DELETE FROM saved_reports WHERE id = ?').run(id);
+/** True when a row was actually deleted — stale-tab deletes must not report success. */
+export function deleteReport(db: Database, id: number): boolean {
+	return db.prepare('DELETE FROM saved_reports WHERE id = ?').run(id).changes > 0;
 }

@@ -1,8 +1,10 @@
 import { db } from '$lib/server/db';
+import { formId } from '$lib/server/form-id';
 import { activeConcerns, dismissConcern, bucketFor, type ConcernRow } from '$lib/server/concerns';
 import { warmingUp } from '$lib/server/detectors';
 import { fullMonthsOfHistory, monthSummary, categoryTrend, monthRange } from '$lib/server/analytics';
 import { localToday } from '$lib/server/balances';
+import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
 function shiftMonth(month: string, delta: number): string {
@@ -83,6 +85,8 @@ export const load: PageServerLoad = () => ({
 export const actions: Actions = {
 	dismiss: async ({ request }) => {
 		const form = await request.formData();
-		dismissConcern(db, Number(form.get('id')));
+		const id = formId(form);
+		if (id == null || !dismissConcern(db, id)) return fail(400, { message: 'no such Concern' });
+		return { ok: true };
 	}
 };

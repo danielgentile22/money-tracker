@@ -57,3 +57,11 @@ test('relative presets survive save/load as presets; custom ranges as absolute d
 	expect(serializeFilters(reopened)).toBe(preset);
 	expect(serializeFilters(reopenedCustom)).toBe(custom);
 });
+
+test('rename/delete on a stale id fail loudly instead of no-op success', () => {
+	const db = makeDb();
+	expect(deleteReport(db, 999)).toBe(false);
+	expect(() => renameReport(db, 999, 'Ghost')).toThrow('no such saved report');
+	const id = saveReport(db, 'Real', { path: '/reports', query: 'date=ytd' });
+	expect(deleteReport(db, id)).toBe(true);
+});

@@ -108,3 +108,12 @@ test('feed ranks by severity, then recency', () => {
 
 	expect(activeConcerns(db).map((c) => c.subject)).toEqual(['c', 'b', 'a']);
 });
+
+test('dismissConcern reports whether an active concern was hit', () => {
+	const db = makeDb();
+	upsertConcerns(db, [candidate({ severity: 40 })]);
+	const id = activeConcerns(db)[0].id;
+	expect(dismissConcern(db, id)).toBe(true);
+	expect(dismissConcern(db, id)).toBe(false); // already dismissed
+	expect(dismissConcern(db, 999)).toBe(false); // no such row
+});

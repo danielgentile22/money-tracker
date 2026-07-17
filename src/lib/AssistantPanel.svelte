@@ -14,6 +14,7 @@
 	let input = $state('');
 	let busy = $state(false);
 	let unavailable = $state(false);
+	let sendFailed = $state(false);
 	let loaded = false;
 
 	$effect(() => {
@@ -51,20 +52,32 @@
 		if (!text || busy) return;
 		input = '';
 		unavailable = false;
+		sendFailed = false;
 		busy = true;
 		// optimistic echo — the server persists the owner message either way
 		messages = [...messages, { id: -1, conversation_id: activeId ?? -1, role: 'user', content: text, feedback: null, tool_audit: null, created_at: '' }];
+		let sent = false; // once the POST succeeds the message is persisted — never roll back after
 		try {
 			const res = await fetch('/assistant', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ conversationId: activeId, text })
 			});
+			if (!res.ok) throw new Error(`send failed: ${res.status}`);
+			sent = true;
 			const result = (await res.json()) as { ok: boolean; conversationId: number };
 			activeId = result.conversationId;
 			if (!result.ok) unavailable = true;
 			messages = (await (await fetch(`/assistant/${activeId}`)).json()).messages;
 			await refreshThreads();
+		} catch {
+			if (!sent) {
+				// never reached the server — undo the optimistic echo, give the text back
+				messages = messages.filter((m) => m.id !== -1);
+				input = text;
+				sendFailed = true;
+			}
+			// else: persisted but the refresh fetch failed — keep the optimistic bubble
 		} finally {
 			busy = false;
 		}
@@ -72,11 +85,16 @@
 
 	async function thumb(m: Message, dir: 'up' | 'down') {
 		const feedback = m.feedback === dir ? null : dir; // click again to clear
-		await fetch(`/assistant/${m.conversation_id}`, {
-			method: 'PATCH',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ messageId: m.id, feedback })
-		});
+		try {
+			const res = await fetch(`/assistant/${m.conversation_id}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ messageId: m.id, feedback })
+			});
+			if (!res.ok) return; // don't show feedback the server didn't record
+		} catch {
+			return;
+		}
 		messages = messages.map((x) => (x.id === m.id ? { ...x, feedback } : x));
 	}
 
@@ -175,6 +193,11 @@
 				{#if unavailable}
 					<p class="t-body-sm soft-error">
 						The AI is unavailable right now — your message is saved. Try again in a moment.
+					</p>
+				{/if}
+				{#if sendFailed}
+					<p class="t-body-sm soft-error">
+						Couldn't reach the server — nothing was sent. Your question is back in the box below.
 					</p>
 				{/if}
 			</div>

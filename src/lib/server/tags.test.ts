@@ -66,3 +66,12 @@ test('deleting a Tag detaches it everywhere; Transactions survive', () => {
 	expect(db.prepare('SELECT COUNT(*) FROM transactions').pluck().get()).toBe(1);
 	expect(listTags(db)).toEqual([]);
 });
+
+test('detachTag reports whether a row was actually removed', () => {
+	const db = makeDb();
+	const tag = addTag(db, 'Once');
+	const t1 = insertTxn(db, 't1');
+	attachTag(db, t1, tag);
+	expect(detachTag(db, t1, tag)).toBe(true);
+	expect(detachTag(db, t1, tag)).toBe(false); // already gone — stale post
+});

@@ -56,7 +56,11 @@
 		}
 	}
 
+	let reqId = 0; // monotonic token: only the latest in-flight search may land
+
 	function close() {
+		clearTimeout(timer);
+		reqId++; // orphan any in-flight fetch so it can't repopulate results after close
 		open = false;
 		query = '';
 		results = [];
@@ -64,15 +68,21 @@
 	}
 
 	function onInput() {
+		selected = 0; // pageMatches shrinks immediately; don't leave the highlight past the end
 		clearTimeout(timer);
 		timer = setTimeout(async () => {
 			if (!query.trim()) {
 				results = [];
 				return;
 			}
-			const res = await fetch(`/search?q=${encodeURIComponent(query)}`);
-			results = (await res.json()).results;
-			selected = 0;
+			const id = ++reqId;
+			try {
+				const res = await fetch(`/search?q=${encodeURIComponent(query)}`);
+				if (!res.ok || id !== reqId || !open) return;
+				results = (await res.json()).results;
+			} catch {
+				/* transient — keep whatever is shown, next keystroke retries */
+			}
 		}, 150);
 	}
 

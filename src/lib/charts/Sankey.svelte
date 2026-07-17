@@ -129,15 +129,26 @@
 
 <svg viewBox="0 0 {W} {H + 20}" role="img" aria-label="Cash flow Sankey">
 	{#each ribbons as r (r.link.source + r.link.target)}
+		{@const clickable = r.endNode.filterKind != null}
+		<!-- only actionable ribbons are focusable buttons; Enter and Space both activate.
+		     role/tabindex share the `clickable` predicate — the compiler can't see that statically -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<path
 			d={r.path}
 			fill={r.color}
 			class="ribbon"
-			class:clickable={r.endNode.filterKind != null}
-			role="button"
-			tabindex="0"
-			onclick={() => onribbon(r.endNode)}
-			onkeydown={(e) => e.key === 'Enter' && onribbon(r.endNode)}
+			class:clickable
+			role={clickable ? 'button' : undefined}
+			tabindex={clickable ? 0 : undefined}
+			onclick={clickable ? () => onribbon(r.endNode) : undefined}
+			onkeydown={clickable
+				? (e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							onribbon(r.endNode);
+						}
+					}
+				: undefined}
 		>
 			<title>{r.endNode.label} · {fmtUSD(r.link.value_cents)}</title>
 		</path>

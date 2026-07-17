@@ -1,4 +1,5 @@
 import { db } from '$lib/server/db';
+import { localToday } from '$lib/server/balances';
 import { runRecurringDetection, recurringKnobs } from '$lib/server/recurring';
 import { buildRecurringView, type SeriesRow } from '$lib/server/recurring-view';
 import { fail } from '@sveltejs/kit';
@@ -11,7 +12,7 @@ export const load: PageServerLoad = () => {
 			 FROM recurring_series`
 		)
 		.all() as SeriesRow[];
-	const today = new Date().toISOString().slice(0, 10);
+	const today = localToday();
 	return {
 		view: buildRecurringView(rows, today, recurringKnobs(db).dayTolerance),
 		muted: db

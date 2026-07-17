@@ -9,6 +9,7 @@ import {
 	realUsageFetch,
 	type PeriodView
 } from '$lib/server/split-usage';
+import { formId } from '$lib/server/form-id';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -188,22 +189,27 @@ export const actions = {
 	},
 	deletePayment: async ({ request }) => {
 		const f = await request.formData();
-		return act(() => void db.prepare('DELETE FROM split_payments WHERE id = ?').run(Number(f.get('id'))));
+		return act(() => {
+			const id = formId(f);
+			if (id == null || db.prepare('DELETE FROM split_payments WHERE id = ?').run(id).changes === 0)
+				throw new Error('no such payment');
+		});
 	},
 	saveSettings: async ({ request }) => {
 		const f = await request.formData();
 		return act(() => {
+			// validate everything before the first write so a rejection leaves nothing half-applied
+			const pct = String(f.get('share_pct') ?? '').trim();
+			if (pct !== '') {
+				const n = Number(pct);
+				if (!Number.isFinite(n) || n <= 0 || n > 100) throw new Error('share % must be 1–100');
+			}
 			const save = (key: string, value: string) => {
 				if (value) putSetting(key, value);
 				else db.prepare('DELETE FROM settings WHERE key = ?').run(key);
 			};
 			save('split_display_name', String(f.get('display_name') ?? '').trim());
 			save('split_partner_name', String(f.get('partner_name') ?? '').trim());
-			const pct = String(f.get('share_pct') ?? '').trim();
-			if (pct !== '') {
-				const n = Number(pct);
-				if (!Number.isFinite(n) || n <= 0 || n > 100) throw new Error('share % must be 1–100');
-			}
 			save('split_share_pct', pct);
 			save('split_payment_pattern', String(f.get('payment_pattern') ?? '').trim());
 			for (const provider of PROVIDERS) {

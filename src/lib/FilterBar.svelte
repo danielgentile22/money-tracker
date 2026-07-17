@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { actionUrl } from '$lib/action-url';
 	import { parseFilters, DATE_PRESETS, type DatePreset, type FilterSet } from '$lib/filters';
 	import { ChevronDown, X, Bookmark } from '@lucide/svelte';
 
@@ -58,7 +59,8 @@
 	type DimKey = (typeof DIMS)[number]['key'];
 
 	function apply(mutate: (q: URLSearchParams) => void) {
-		const q = new URLSearchParams(page.url.searchParams);
+		// strip stale /action params left by a plain-form POST — same contract as actionUrl
+		const q = new URLSearchParams([...page.url.searchParams].filter(([k]) => !k.startsWith('/')));
 		q.delete('page');
 		q.delete('focus');
 		mutate(q);
@@ -84,6 +86,7 @@
 			else if (values.length) q.set(param, values.join(','));
 		});
 		form.closest('details')?.removeAttribute('open');
+		if (key === 'merchants') merchantSearch = ''; // stale search must not hide options on reopen
 	}
 
 	function clearDim(key: DimKey, mode: 'include' | 'exclude') {
@@ -132,17 +135,13 @@
 
 	// what a saved view captures: the canonical filter query + the page's own params
 	const saveQuery = $derived.by(() => {
-		const q = new URLSearchParams(page.url.searchParams);
+		const q = new URLSearchParams([...page.url.searchParams].filter(([k]) => !k.startsWith('/')));
 		q.delete('page');
 		q.delete('focus');
 		return q.toString();
 	});
 
 	let renaming = $state<number | null>(null);
-
-	// plain form posts replace the query string — carry the filters through the
-	// action URL so the page re-renders with its state intact
-	const action = $derived((name: string) => (saveQuery ? `?${saveQuery}&/${name}` : `?/${name}`));
 </script>
 
 <div class="filter-bar">
@@ -215,10 +214,16 @@
 						{#each d.options as o (o.id)}
 							{#if o.heading}
 								<span class="t-body-sm t-muted heading">{o.label}</span>
-							{:else if d.key !== 'merchants' || !merchantSearch || o.label
-									.toLowerCase()
-									.includes(merchantSearch.toLowerCase())}
-								<label class="check opt">
+							{:else}
+								<!-- hidden, not unmounted: FormData must keep selections the search filters out -->
+								<label
+									class="check opt"
+									style:display={d.key === 'merchants' &&
+									!!merchantSearch &&
+									!o.label.toLowerCase().includes(merchantSearch.toLowerCase())
+										? 'none'
+										: undefined}
+								>
 									<input
 										type="checkbox"
 										name="v"
@@ -241,7 +246,7 @@
 		<details class="dropdown saved">
 			<summary class="btn btn-tertiary btn-sm"><Bookmark size={14} /> Saved{saved.length ? ` · ${saved.length}` : ''}</summary>
 			<div class="pane surface">
-				<form method="POST" action={action('saveReport')} class="row" style="gap: var(--space-2);">
+				<form method="POST" action={actionUrl('saveReport')} class="row" style="gap: var(--space-2);">
 					<input type="hidden" name="query" value={saveQuery} />
 					<input class="input" type="text" name="name" placeholder="Name this view…" required />
 					<button class="btn btn-secondary btn-sm" type="submit">Save</button>
@@ -249,7 +254,7 @@
 				{#each saved as r (r.id)}
 					<div class="row saved-row">
 						{#if renaming === r.id}
-							<form method="POST" action={action('renameReport')} class="row" style="gap: var(--space-2); flex: 1;">
+							<form method="POST" action={actionUrl('renameReport')} class="row" style="gap: var(--space-2); flex: 1;">
 								<input type="hidden" name="id" value={r.id} />
 								<input class="input" type="text" name="name" value={r.name} required />
 								<button class="btn btn-secondary btn-sm" type="submit">Rename</button>
@@ -259,7 +264,7 @@
 							<button class="btn btn-tertiary btn-sm" type="button" onclick={() => (renaming = r.id)}>
 								Rename
 							</button>
-							<form method="POST" action={action('deleteReport')}>
+							<form method="POST" action={actionUrl('deleteReport')}>
 								<input type="hidden" name="id" value={r.id} />
 								<button class="btn btn-tertiary btn-sm" type="submit" title="Delete saved report">
 									<X size={14} />

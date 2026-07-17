@@ -8,10 +8,9 @@ import { listReports } from '$lib/server/saved-reports';
 import { openReviewCount } from '$lib/server/dashboard';
 import { savedReportActions } from '$lib/server/saved-report-actions';
 import { ledgerActions } from '$lib/server/ledger-actions';
-import { runLookupBatch, isBackfilling, hasConnectedInbox } from '$lib/server/backfill';
+import { runLookupBatch, isBackfilling } from '$lib/server/backfill';
 import { realReceiptSource } from '$lib/server/gmail';
 import { realLlm } from '$lib/server/llm';
-import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
 const PAGE_SIZE = 100;
@@ -94,15 +93,18 @@ export const load: PageServerLoad = ({ url }) => {
 			.all() as string[],
 		saved: listReports(db, '/transactions'),
 		hasDimensionFilters:
-			['categories', 'groups', 'accounts', 'tags', 'merchants', 'date', 'from'].some((k) =>
-				url.searchParams.has(k)
-			),
+			// include and exclude (x-prefixed) keys both count as active filters
+			['categories', 'groups', 'accounts', 'tags', 'merchants'].some(
+				(k) => url.searchParams.has(k) || url.searchParams.has(`x${k}`)
+			) ||
+			url.searchParams.has('date') ||
+			url.searchParams.has('from'),
 		amounts: { min: url.searchParams.get('min'), max: url.searchParams.get('max') }
 	};
 };
 
 export const actions: Actions = {
-	...savedReportActions('/transactions', 'all'),
+	...savedReportActions('/transactions', 'all', ['min', 'max']),
 	...ledgerActions(),
 	// the bulk cousin of ?/lookup: every filtered spend charge, fire-and-forget
 	// like the Settings scans (shared one-at-a-time guard and progress channel)
@@ -111,8 +113,6 @@ export const actions: Actions = {
 		// the page's query string rides along so the batch matches what's filtered
 		const url = new URL(String(f.get('qs') ?? ''), 'http://localhost');
 		const ids = lookupTargets(url);
-		if (!hasConnectedInbox(db))
-			return fail(400, { message: 'no connected inbox — re-enroll Gmail in Settings' });
 		void runLookupBatch(db, realReceiptSource, realLlm, ids).catch((e) =>
 			console.error('bulk lookup failed:', e)
 		);

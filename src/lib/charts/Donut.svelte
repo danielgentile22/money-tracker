@@ -46,15 +46,26 @@
 
 <svg viewBox="0 0 200 200" role="img" aria-label="Breakdown donut">
 	{#each arcs as a (a.i)}
+		{@const clickable = a.slice.id !== null}
+		<!-- only actionable slices are focusable buttons; Enter and Space both activate.
+		     role/tabindex share the `clickable` predicate — the compiler can't see that statically -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<path
 			d={arcPath(a.start, a.end)}
 			fill={sliceColor(a.i, a.slice.id === null && a.slice.label === 'Other')}
 			class="slice"
-			class:clickable={a.slice.id !== null}
-			role="button"
-			onclick={() => onslice(a.slice)}
-			onkeydown={(e) => e.key === 'Enter' && onslice(a.slice)}
-			tabindex="0"
+			class:clickable
+			role={clickable ? 'button' : undefined}
+			onclick={clickable ? () => onslice(a.slice) : undefined}
+			onkeydown={clickable
+				? (e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							onslice(a.slice);
+						}
+					}
+				: undefined}
+			tabindex={clickable ? 0 : undefined}
 		>
 			<title>{a.slice.label} · {fmtUSD(a.slice.amount_cents)} · {Math.round(a.slice.share * 100)}%</title>
 		</path>

@@ -1,4 +1,5 @@
 import { db } from '$lib/server/db';
+import { formId } from '$lib/server/form-id';
 import { updateRule, deleteRule } from '$lib/server/corrections';
 import { groupedCategories } from '$lib/server/groups';
 import { addTag } from '$lib/server/tags';
@@ -67,7 +68,8 @@ export const actions: Actions = {
 	},
 	delete: async ({ request }) => {
 		const f = await request.formData();
-		deleteRule(db, Number(f.get('id')));
+		const id = formId(f);
+		if (id == null || !deleteRule(db, id)) return fail(400, { message: 'no such Rule' });
 		return { ok: true };
 	}
 };

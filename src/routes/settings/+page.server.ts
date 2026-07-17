@@ -11,14 +11,12 @@ import {
 	runReceiptScan,
 	isBackfilling,
 	backfillProgress,
-	receiptScanStats,
-	hasConnectedInbox
+	receiptScanStats
 } from '$lib/server/backfill';
 import { householdContextBlock } from '$lib/server/assistant';
 import { setSecret, deleteSecret } from '$lib/server/keychain';
 import { WIDGETS, readLayout, saveLayout, readSidebar, saveSidebar } from '$lib/server/dashboard';
 import { splitDisplayName } from '$lib/server/split-usage';
-import { localToday } from '$lib/server/balances';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -51,24 +49,18 @@ export const load: PageServerLoad = ({ url }) => {
 			 ORDER BY m.plaid_key`
 		)
 		.all() as { plaid_key: string; category_id: number; category_name: string }[];
-	const thisYear = Number(localToday().slice(0, 4));
 	const plans529 = (
 		db.prepare("SELECT id, name FROM accounts WHERE subtype = '529' ORDER BY id").all() as {
 			id: number;
 			name: string;
 		}[]
-	).map((a) => {
-		// stored as a birth year (#14); the form still shows "Age today" derived
-		// from the current year, but persisting the year keeps it stable
-		const birthYear = setting(`529_${a.id}_birth_year`) as string | undefined;
-		return {
-			...a,
-			beneficiary: (setting(`529_${a.id}_name`) as string) ?? '',
-			age: birthYear ? String(thisYear - Number(birthYear)) : '',
-			target_dollars: (setting(`529_${a.id}_target_dollars`) as string) ?? '',
-			override_monthly_dollars: (setting(`529_${a.id}_override_monthly_dollars`) as string) ?? ''
-		};
-	});
+	).map((a) => ({
+		...a,
+		beneficiary: (setting(`529_${a.id}_name`) as string) ?? '',
+		age: (setting(`529_${a.id}_age`) as string) ?? '',
+		target_dollars: (setting(`529_${a.id}_target_dollars`) as string) ?? '',
+		override_monthly_dollars: (setting(`529_${a.id}_override_monthly_dollars`) as string) ?? ''
+	}));
 	const assumedReturn = (setting('assumed_return_pct') as string) ?? '5';
 
 	// what each scan button would touch — same SQL shape as runBackfill, so the
@@ -204,8 +196,6 @@ export const actions: Actions = {
 	},
 	receiptScan: async ({ request }) => {
 		const scope = String((await request.formData()).get('scope')) === 'month' ? 'month' : 'all';
-		if (!hasConnectedInbox(db))
-			return { ok: false, message: 'no connected inbox — re-enroll Gmail below first' };
 		void runReceiptScan(db, realReceiptSource, realLlm, scope).catch((e) =>
 			console.error('receipt scan failed:', e)
 		);
@@ -214,25 +204,29 @@ export const actions: Actions = {
 	save529: async ({ request }) => {
 		const f = await request.formData();
 		const id = Number(f.get('account_id'));
+		if (!Number.isInteger(id) || id <= 0) return fail(400, { message: 'no such account' });
 		return act(() => {
 			const num = (field: string, opts: { min?: number; max?: number } = {}) => {
-				const raw = (f.get(field) as string).trim();
+				const raw = String(f.get(field) ?? '').trim();
 				if (raw === '') return null;
 				const n = Number(raw);
 				if (!Number.isFinite(n) || n < (opts.min ?? 0) || n > (opts.max ?? Infinity))
 					throw new Error(`${field} out of range`);
 				return n;
 			};
+			// parse everything before the first write so a rejection leaves nothing half-applied
 			const age = num('age', { max: 18 });
 			const target = num('target_dollars');
 			const override = num('override_monthly_dollars');
+			// empty field means "clear it" — write or delete, never silently keep
+			const set = (key: string, v: number | null) => {
+				if (v != null) putSetting(key, String(v));
+				else db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+			};
 			putSetting(`529_${id}_name`, ((f.get('beneficiary') as string) ?? '').trim());
-			// persist a birth year so the college year stays anchored to the child (#14)
-			if (age != null)
-				putSetting(`529_${id}_birth_year`, String(Number(localToday().slice(0, 4)) - age));
-			if (target != null) putSetting(`529_${id}_target_dollars`, String(target));
-			if (override != null) putSetting(`529_${id}_override_monthly_dollars`, String(override));
-			else db.prepare('DELETE FROM settings WHERE key = ?').run(`529_${id}_override_monthly_dollars`);
+			set(`529_${id}_age`, age);
+			set(`529_${id}_target_dollars`, target);
+			set(`529_${id}_override_monthly_dollars`, override);
 		});
 	},
 	enrollInbox: async ({ url }) => {
