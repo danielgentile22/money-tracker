@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fmtUSD } from '$lib/money';
+	import { fmtMonth } from '$lib/dates';
 	import ProgressBar from '$lib/charts/ProgressBar.svelte';
 	import InfoTip from '$lib/InfoTip.svelte';
 	import type { Snapshot, WidgetSize } from '$lib/server/dashboard';
@@ -7,9 +8,7 @@
 	let { data, size = 'medium' }: { data: NonNullable<Snapshot['budget']>; size?: WidgetSize } =
 		$props();
 
-	const monthLabel = $derived(
-		new Date(`${data.month}-15`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-	);
+	const monthLabel = $derived(fmtMonth(data.month));
 	const label = (l: { emoji: string | null; name: string }) =>
 		l.emoji ? `${l.emoji} ${l.name}` : l.name;
 	const tip =

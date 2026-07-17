@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fmtDay } from '$lib/dates';
 	import { ChevronLeft, ChevronRight } from '@lucide/svelte';
 	import InfoTip from '$lib/InfoTip.svelte';
 	import type { Snapshot } from '$lib/server/dashboard';
@@ -11,10 +12,8 @@
 	const recap = $derived(data.recaps[index]);
 
 	function weekLabel(monday: string): string {
-		const fmt = (d: string) =>
-			new Date(`${d}T00:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric' });
 		const sunday = new Date(Date.parse(monday) + 6 * 86_400_000).toISOString().slice(0, 10);
-		return `${fmt(monday)} – ${fmt(sunday)}`;
+		return `${fmtDay(monday)} – ${fmtDay(sunday)}`;
 	}
 </script>
 

@@ -5,6 +5,7 @@ import { runLlmCategorization } from './llm-categorizer';
 import { enrichTransaction } from './receipt-extractor';
 import { triggerLookup } from './resolution';
 import { isSyncing } from './sync-runner';
+import { getSetting, putSetting } from './settings';
 
 // Settings scans (the catch-up the per-sync pipeline never does), each with an
 // 'all' | 'month' scope:
@@ -23,10 +24,7 @@ export function isBackfilling(): boolean {
 export type ScanProgress = { label: string; done: number; total: number };
 
 export function backfillProgress(db: Database): ScanProgress | null {
-	const raw = db
-		.prepare('SELECT value FROM settings WHERE key = ?')
-		.pluck()
-		.get('backfill_progress') as string | undefined;
+	const raw = getSetting(db, 'backfill_progress');
 	if (!raw) return null;
 	try {
 		return JSON.parse(raw) as ScanProgress;
@@ -36,9 +34,7 @@ export function backfillProgress(db: Database): ScanProgress | null {
 }
 
 function progress(db: Database, label: string, done = 0, total = 0): void {
-	db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('backfill_progress', ?)").run(
-		JSON.stringify({ label, done, total })
-	);
+	putSetting(db, 'backfill_progress', JSON.stringify({ label, done, total }));
 }
 
 /** A Gmail scan needs at least one live inbox — otherwise every "no match" is a lie. */
@@ -79,6 +75,26 @@ export function receiptScanStats(db: Database): Record<string, number> {
 const monthWindow = (scope: 'all' | 'month') =>
 	scope === 'month' ? "AND date >= date('now', '-1 month')" : '';
 
+// The scans' WHERE fragments, shared with scanCounts so the Settings confirm
+// popup counts exactly what a run would touch (#17).
+const CATEGORIZE_WHERE = `category_source IN ('plaid', 'llm', 'llm+receipt')
+   AND is_transfer = 0 AND is_investment_activity = 0`;
+const SEARCH_WHERE = `pending = 0 AND is_transfer = 0 AND is_investment_activity = 0
+   AND amount_cents < 0`;
+// 'month' only revisits not-yet-matched charges; 'all' redoes everything
+const searchScope = (scope: 'all' | 'month') =>
+	`${monthWindow(scope)}${scope === 'month' ? " AND (receipt_search_state IS NULL OR receipt_search_state != 'matched')" : ''}`;
+
+/** What each scan button would touch — same WHERE fragments the scans run. */
+export function scanCounts(db: Database, scope: 'all' | 'month'): { categorize: number; search: number } {
+	const count = (where: string) =>
+		db.prepare(`SELECT COUNT(*) FROM transactions WHERE ${where}`).pluck().get() as number;
+	return {
+		categorize: count(`${CATEGORIZE_WHERE} ${monthWindow(scope)}`),
+		search: count(`${SEARCH_WHERE} ${searchScope(scope)}`)
+	};
+}
+
 /**
  * AI categorization only — every model-decidable Transaction in scope gets the
  * batched unified categorizer. Fire-and-forget from Settings; one scan at a
@@ -93,12 +109,7 @@ export async function runCategorizationScan(
 	running = true;
 	try {
 		const ids = db
-			.prepare(
-				`SELECT id FROM transactions
-				 WHERE category_source IN ('plaid', 'llm', 'llm+receipt')
-				   AND is_transfer = 0 AND is_investment_activity = 0
-				 ${monthWindow(scope)}`
-			)
+			.prepare(`SELECT id FROM transactions WHERE ${CATEGORIZE_WHERE} ${monthWindow(scope)}`)
 			.pluck()
 			.all() as number[];
 		progress(db, 'categorizing', 0, ids.length);
@@ -140,12 +151,7 @@ export async function runReceiptScan(
 	try {
 		const charges = db
 			.prepare(
-				`SELECT id FROM transactions
-				 WHERE pending = 0 AND is_transfer = 0 AND is_investment_activity = 0
-				   AND amount_cents < 0
-				   ${monthWindow(scope)}
-				   ${scope === 'month' ? "AND (receipt_search_state IS NULL OR receipt_search_state != 'matched')" : ''}
-				 ORDER BY date DESC`
+				`SELECT id FROM transactions WHERE ${SEARCH_WHERE} ${searchScope(scope)} ORDER BY date DESC`
 			)
 			.pluck()
 			.all() as number[];

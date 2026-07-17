@@ -1,16 +1,12 @@
 <script lang="ts">
 	import { fmtUSD } from '$lib/money';
+	import { fmtDay as fmtDayBase } from '$lib/dates';
 	import { RefreshCw, Trash2, Link2 } from '@lucide/svelte';
 	import type { PeriodView } from '$lib/server/split-usage';
 
 	let { data, form } = $props();
 
-	const fmtDay = (iso: string) =>
-		new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric'
-		});
+	const fmtDay = (iso: string) => fmtDayBase(iso, { year: 'numeric' });
 
 	const sharePctOf = (p: PeriodView) =>
 		p.totalCost > 0 ? `${((p.matchedCost / p.totalCost) * 100).toFixed(1)}%` : '—';

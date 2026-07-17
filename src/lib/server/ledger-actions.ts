@@ -1,4 +1,5 @@
-import { db } from '$lib/server/db';
+import type { Database } from 'better-sqlite3';
+import { db as defaultDb } from '$lib/server/db';
 import { applyCorrection, applyBulkCorrection } from '$lib/server/corrections';
 import { addTag, attachTag, detachTag, bulkAttach } from '$lib/server/tags';
 import { triggerLookup, enrichAndCategorize } from '$lib/server/resolution';
@@ -12,8 +13,9 @@ import { fail, type Actions } from '@sveltejs/kit';
  * Transactions). Any route that mounts Ledger.svelte spreads these in —
  * same pattern as savedReportActions. Returns are inferred (satisfies, not a
  * plain Actions annotation) so each route's ActionData keeps message/lookup.
+ * db is injectable so the parsing/validation layer is testable (#37).
  */
-export function ledgerActions() {
+export function ledgerActions(db: Database = defaultDb) {
 	return {
 		correct: async ({ request }) => {
 			const f = await request.formData();

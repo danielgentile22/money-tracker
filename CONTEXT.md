@@ -223,8 +223,9 @@ _Avoid_: billing cycle, invoice
 ## Flagged ambiguities
 
 - **Label vs Category** — the owner said "labeling." Resolved as: "labeling" = assigning a
-  **Category**. There is (so far) no separate free-form tag concept. Revisit if the owner
-  wants tags independent of Categories.
+  **Category**. _Resolved 2026 (stories 17–19):_ free-form **Tags** now exist alongside
+  Categories — many-per-Transaction, attachable via Rules or the Ledger, filterable (see
+  the Filter set entry). "Labeling" still means Category assignment.
 - **Unresolved charge** — name kept; definition made concrete (grill session 2026-07-04):
   no Rule + (confidence < HIGH OR ambiguous payee).
 

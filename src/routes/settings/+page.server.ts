@@ -1,4 +1,9 @@
 import { db } from '$lib/server/db';
+import {
+	getSetting,
+	putSetting as putSettingIn,
+	deleteSetting as deleteSettingIn
+} from '$lib/server/settings';
 import { setMapping } from '$lib/server/categories';
 import { groupedCategories } from '$lib/server/groups';
 import { listTags, addTag, renameTag, deleteTag } from '$lib/server/tags';
@@ -12,7 +17,8 @@ import {
 	isBackfilling,
 	backfillProgress,
 	receiptScanStats,
-	hasConnectedInbox
+	hasConnectedInbox,
+	scanCounts
 } from '$lib/server/backfill';
 import { householdContextBlock } from '$lib/server/assistant';
 import { setSecret, deleteSecret } from '$lib/server/keychain';
@@ -23,7 +29,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = ({ url }) => {
-	const hasOverride = db.prepare('SELECT 1 FROM settings WHERE key = ?').pluck();
+	const hasOverride = (key: string) => setting(key) != null;
 	const detectors = DETECTORS.map((d) => {
 		const values = knobValues(db, d);
 		return {
@@ -37,7 +43,7 @@ export const load: PageServerLoad = ({ url }) => {
 				unit: k.unit,
 				default: k.default,
 				current: values[k.key],
-				overridden: hasOverride.get(`detector_${d.key}_${k.key}`) != null
+				overridden: hasOverride(`detector_${d.key}_${k.key}`)
 			}))
 		};
 	});
@@ -71,27 +77,9 @@ export const load: PageServerLoad = ({ url }) => {
 	});
 	const assumedReturn = (setting('assumed_return_pct') as string) ?? '5';
 
-	// what each scan button would touch — same SQL shape as runBackfill, so the
-	// confirm popup's numbers match what actually runs
-	const count = (sql: string) => db.prepare(sql).pluck().get() as number;
-	const cat = (w: string) =>
-		count(`SELECT COUNT(*) FROM transactions
-		       WHERE category_source IN ('plaid', 'llm', 'llm+receipt')
-		         AND is_transfer = 0 AND is_investment_activity = 0 ${w}`);
-	const search = (w: string) =>
-		count(`SELECT COUNT(*) FROM transactions
-		       WHERE pending = 0 AND is_transfer = 0 AND is_investment_activity = 0
-		         AND amount_cents < 0 ${w}`);
-	const month = "AND date >= date('now', '-1 month')";
-	const scanPreview = {
-		all: { categorize: cat(''), search: search('') },
-		month: {
-			categorize: cat(month),
-			search: search(
-				`${month} AND (receipt_search_state IS NULL OR receipt_search_state != 'matched')`
-			)
-		}
-	};
+	// what each scan button would touch — scanCounts shares the scans' own
+	// WHERE fragments, so the confirm popup's numbers match what actually runs
+	const scanPreview = { all: scanCounts(db, 'all'), month: scanCounts(db, 'month') };
 
 	return {
 		widgets: WIDGETS,
@@ -126,11 +114,10 @@ export const load: PageServerLoad = ({ url }) => {
 	};
 };
 
-const setting = (key: string) =>
-	db.prepare('SELECT value FROM settings WHERE key = ?').pluck().get(key) as string | undefined;
-
-const putSetting = (key: string, value: string) =>
-	db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+// this route's settings access, bound to the singleton db (#83)
+const setting = (key: string) => getSetting(db, key);
+const putSetting = (key: string, value: string) => putSettingIn(db, key, value);
+const deleteSetting = (key: string) => deleteSettingIn(db, key);
 
 function act(fn: () => void) {
 	try {
@@ -174,21 +161,21 @@ export const actions: Actions = {
 		return act(() => {
 			const n = Number(raw);
 			if (raw === '' || !Number.isFinite(n)) throw new Error(`"${raw}" is not a number`);
-			db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, String(n));
+			putSetting(key, String(n));
 		});
 	},
 	resetKnob: async ({ request }) => {
 		const f = await request.formData();
 		const key = `detector_${f.get('detector')}_${f.get('knob')}`;
-		return act(() => void db.prepare('DELETE FROM settings WHERE key = ?').run(key));
+		return act(() => deleteSetting(key));
 	},
 	toggleDetector: async ({ request }) => {
 		const f = await request.formData();
 		const key = `detector_${f.get('detector')}_enabled`;
 		return act(() => {
 			if (f.get('enabled') === '0')
-				db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, '0');
-			else db.prepare('DELETE FROM settings WHERE key = ?').run(key); // default = enabled
+				putSetting(key, '0');
+			else deleteSetting(key); // default = enabled
 		});
 	},
 	rerunDetectors: async () => act(() => runDetectors(db)),
@@ -232,7 +219,7 @@ export const actions: Actions = {
 				putSetting(`529_${id}_birth_year`, String(Number(localToday().slice(0, 4)) - age));
 			if (target != null) putSetting(`529_${id}_target_dollars`, String(target));
 			if (override != null) putSetting(`529_${id}_override_monthly_dollars`, String(override));
-			else db.prepare('DELETE FROM settings WHERE key = ?').run(`529_${id}_override_monthly_dollars`);
+			else deleteSetting(`529_${id}_override_monthly_dollars`);
 		});
 	},
 	enrollInbox: async ({ url }) => {
@@ -266,7 +253,7 @@ export const actions: Actions = {
 			for (const key of ['proposer_model', 'narrator_model', 'assistant_model'] as const) {
 				const value = ((f.get(key) as string) ?? '').trim();
 				if (value) putSetting(key, value);
-				else db.prepare('DELETE FROM settings WHERE key = ?').run(key); // back to default
+				else deleteSetting(key); // back to default
 			}
 		});
 	},
@@ -279,7 +266,7 @@ export const actions: Actions = {
 				const value = ((f.get(key) as string) ?? '').trim();
 				const setting = `household_${key}`;
 				if (value) putSetting(setting, value);
-				else db.prepare('DELETE FROM settings WHERE key = ?').run(setting);
+				else deleteSetting(setting);
 			}
 		});
 	},

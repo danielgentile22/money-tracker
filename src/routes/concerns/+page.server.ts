@@ -1,15 +1,9 @@
 import { db } from '$lib/server/db';
 import { activeConcerns, dismissConcern, bucketFor, type ConcernRow } from '$lib/server/concerns';
 import { warmingUp } from '$lib/server/detectors';
-import { fullMonthsOfHistory, monthSummary, categoryTrend, monthRange } from '$lib/server/analytics';
+import { fullMonthsOfHistory, monthSummary, categoryTrend, monthRange, shiftMonth } from '$lib/server/analytics';
 import { localToday } from '$lib/server/balances';
 import type { Actions, PageServerLoad } from './$types';
-
-function shiftMonth(month: string, delta: number): string {
-	const [y, m] = month.split('-').map(Number);
-	const n = y * 12 + (m - 1) + delta;
-	return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
-}
 
 /** The Concern's underlying trend, per Detector kind (PRD: feed + sparklines). */
 function sparkFor(c: ConcernRow, today: string): number[] {

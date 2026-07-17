@@ -54,6 +54,11 @@ Each rung handles only what the one above couldn't:
    is built — Plaid covers generalization, Rules cover personalization (why not ML: see
    ADR-0005).
 
+   > **Superseded as-built:** receipt-informed categorization is auto-applied with an
+   > `llm+receipt` provenance and full audit trail instead of queueing Proposals — see
+   > ADR-0007 and CONTEXT.md (Resolution). The review queue remains for ambiguous
+   > Transfers and detector items.
+
 **Corrections = "learned patterns":** fixing a Category by hand mints or updates a Rule via
 an "apply to future matches" toggle — default ON for normal merchants, OFF for ambiguous
 ones (a one-off Amazon gift must not mint Amazon→Gift). Deterministic, auditable, no
@@ -115,8 +120,14 @@ always shown):
   narration hedges figures the owner's hygiene backlog still moves.
 - Triggers: on-demand "Explain this month" + one auto monthly summary, generated on the
   first launch of a new month. Not per-sync.
-- Models are Settings knobs: Claude Haiku for receipt Proposals, Claude Sonnet for
-  narration (defaults). No key / dead API → numbers render, narration says unavailable.
+- Models are Settings knobs; every rung (proposer, narrator, assistant) defaults to
+  Claude Sonnet — the live defaults are `MODEL_DEFAULTS` in `src/lib/server/llm.ts`.
+  No key / dead API → numbers render, narration says unavailable.
+
+> **Superseded as-built:** the shipped surfaces grew past this table — Categories,
+> Cash Flow, Recurring, Reports, Splits, and Assistant were added on top of the nine
+> below. CONTEXT.md and ADR-0008 describe the as-built set; the table stays as the
+> v1 plan of record.
 
 ## UI surfaces (all 9 in v1)
 
@@ -147,9 +158,9 @@ tokens (lime = up/saved, magenta = down/overage, indigo = primary series).
 ## Stack (see ADR-0002)
 
 TypeScript full-stack **SvelteKit** · **SQLite** (`better-sqlite3`) · charts via **Observable
-Plot** · SDKs: `plaid`, `googleapis`, `@anthropic-ai/sdk`. No auth (localhost). Secrets in
-**macOS Keychain**. Tauri wrapper deferred. Develop against **Plaid Sandbox** first; swap to
-production keys once flows work.
+Plot** · SDKs: `plaid`, `@anthropic-ai/sdk` (Gmail via raw `fetch`, no SDK). No auth
+(localhost). Secrets in **macOS Keychain**. Tauri wrapper deferred. Develop against
+**Plaid Sandbox** first; swap to production keys once flows work.
 
 ## Privacy boundary (see ADR-0001)
 
