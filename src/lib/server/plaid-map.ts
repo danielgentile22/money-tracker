@@ -60,3 +60,16 @@ export function mapInvestmentTxn(t: InvestmentTransaction): SourceInvestmentTxn 
 		internal: !external
 	};
 }
+
+/**
+ * True when a removeConnection itemRemove failure means the Item/token is
+ * already gone (safe to finish local teardown); false for anything transient
+ * — network, 5xx, rate limit, locked Keychain — which must rethrow so the
+ * access token survives for a retry (audit #26).
+ */
+export function itemAlreadyGone(e: unknown): boolean {
+	const code = (e as { response?: { data?: { error_code?: string } } })?.response?.data
+		?.error_code;
+	if (code === 'ITEM_NOT_FOUND' || code === 'INVALID_ACCESS_TOKEN') return true;
+	return e instanceof Error && e.message.startsWith('No access token in Keychain');
+}

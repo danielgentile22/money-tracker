@@ -170,6 +170,8 @@ export function beginEnrollment(origin: string): string {
 				'  security add-generic-password -s money-tracker -a google-client-secret -w <secret>'
 		);
 	}
+	// sweep abandoned enrollments so the map can't grow for the process lifetime
+	for (const [s, exp] of pendingStates) if (exp < Date.now()) pendingStates.delete(s);
 	const state = crypto.randomUUID();
 	pendingStates.set(state, Date.now() + 10 * 60_000);
 	const params = new URLSearchParams({

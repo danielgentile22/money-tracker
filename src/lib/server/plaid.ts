@@ -2,7 +2,7 @@ import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } fro
 import { getSecret, setSecret, deleteSecret } from './keychain';
 import { db } from './db';
 import { upsertAccounts, type PlaidSource, type SourceInvestmentTxn } from './sync';
-import { mapAccount, mapTransaction, mapInvestmentTxn } from './plaid-map';
+import { mapAccount, mapTransaction, mapInvestmentTxn, itemAlreadyGone } from './plaid-map';
 
 // sandbox | production — flipped at p1-11 cutover. Secrets differ per env.
 export const PLAID_ENV = process.env.PLAID_ENV ?? 'sandbox';
@@ -80,7 +80,8 @@ export async function exchangePublicToken(
 		)
 		.pluck()
 		.get(institutionName, item_id) as number;
-	await refreshAccounts(connectionId);
+	// best-effort: the exchange already succeeded; accounts arrive on first sync
+	await refreshAccounts(connectionId).catch(() => {});
 	return connectionId;
 }
 
@@ -143,8 +144,11 @@ export async function removeConnection(connectionId: number): Promise<void> {
 	if (!row) return;
 	try {
 		await client().itemRemove({ access_token: accessTokenFor(row.plaid_item_id) });
-	} catch {
-		// token already gone or Item already removed — still clean up locally
+	} catch (e) {
+		// token already gone or Item already removed — still clean up locally;
+		// transient failures rethrow so the token survives for a retry (else the
+		// Item stays live at Plaid with no credential left to revoke it)
+		if (!itemAlreadyGone(e)) throw e;
 	}
 	deleteSecret(`plaid-access-token-${row.plaid_item_id}`);
 	db.transaction(() => {
