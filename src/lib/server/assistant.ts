@@ -28,6 +28,10 @@ import { appendMessage, createConversation, getMessages, type Message } from './
 export const MAX_TOOL_ITERATIONS = 6;
 /** A broad question can't ship the entire ledger in one payload. */
 export const TXN_LIST_CAP = 40;
+/** One iteration can't fan out into unbounded tool executions (#14 / ADR-0011). */
+export const MAX_TOOL_CALLS_PER_ITERATION = 4;
+/** One tool payload can't blow up the context window; truncated with a marker. */
+export const TOOL_RESULT_MAX_CHARS = 20_000;
 
 const dollars = (cents: number) => Math.round(cents) / 100;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -361,10 +365,17 @@ export async function runAssistantTurn(
 			turns.push({ role: 'assistant', content: reply.text, toolCalls: reply.toolCalls });
 			turns.push({
 				role: 'tool',
-				results: reply.toolCalls.map((tc) => {
-					const result = executeTool(db, tc.name, tc.input, today);
+				results: reply.toolCalls.map((tc, idx) => {
+					// every tool_use id must get a result, but only the first N execute
+					const result =
+						idx < MAX_TOOL_CALLS_PER_ITERATION
+							? executeTool(db, tc.name, tc.input, today)
+							: { error: `too many tool calls; at most ${MAX_TOOL_CALLS_PER_ITERATION} per turn` };
 					audit.push({ tool: tc.name, input: tc.input, result });
-					return { toolCallId: tc.id, content: JSON.stringify(result) };
+					let content = JSON.stringify(result);
+					if (content.length > TOOL_RESULT_MAX_CHARS)
+						content = content.slice(0, TOOL_RESULT_MAX_CHARS) + '…[truncated: result too large]';
+					return { toolCallId: tc.id, content };
 				})
 			});
 		}
@@ -381,6 +392,9 @@ export async function runAssistantTurn(
 		throw e;
 	}
 
+	// #22: never persist an empty assistant message — an empty turn breaks the
+	// conversation permanently on replay (the API rejects empty content)
+	if (!finalText.trim()) finalText = '(no reply)';
 	const message = appendMessage(db, convoId, 'assistant', finalText, JSON.stringify(audit));
 	return { ok: true, conversationId: convoId, message };
 }

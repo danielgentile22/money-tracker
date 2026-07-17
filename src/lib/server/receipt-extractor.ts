@@ -42,7 +42,13 @@ export async function enrichTransaction(db: Database, llm: Llm, txnId: number): 
 		.pluck()
 		.get(txnId) as string | undefined;
 	if (!json) return;
-	const receipt = JSON.parse(json) as ReceiptCandidate;
+	// #61: a malformed stored receipt_json skips enrichment instead of throwing
+	let receipt: ReceiptCandidate;
+	try {
+		receipt = JSON.parse(json) as ReceiptCandidate;
+	} catch {
+		return;
+	}
 	let reply: string;
 	try {
 		reply = await llm({

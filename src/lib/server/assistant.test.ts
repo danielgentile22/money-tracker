@@ -3,7 +3,9 @@ import Database, { type Database as Db } from 'better-sqlite3';
 import { migrate } from './db/migrate';
 import {
 	ASSISTANT_TOOLS,
+	MAX_TOOL_CALLS_PER_ITERATION,
 	MAX_TOOL_ITERATIONS,
+	TOOL_RESULT_MAX_CHARS,
 	TXN_LIST_CAP,
 	buildAssistantSystemPrompt,
 	executeTool,
@@ -251,4 +253,47 @@ test('no assistant payload — system prompt or any tool result — can leak acc
 	const everySentByte = JSON.stringify(requests);
 	for (const leak of LEAKS) expect(everySentByte).not.toContain(leak);
 	expect(everySentByte).toContain('CAFE'); // the allowed shapes still flow
+});
+
+// ---------- boundedness & durability (#14) ----------
+
+test('an empty final reply persists as "(no reply)", never an empty message', async () => {
+	const db = makeDb();
+	const { llm } = scriptedLlm([answer('   ')]);
+	const result = await runAssistantTurn(db, llm, null, 'q', TODAY);
+	expect(result.ok).toBe(true);
+	const msgs = getMessages(db, result.conversationId);
+	expect(msgs[1]).toMatchObject({ role: 'assistant', content: '(no reply)' });
+});
+
+test('tool fan-out is capped per iteration; excess calls get an error result', async () => {
+	const db = makeDb();
+	txn(db, '2026-06-10', -25000, 'CAFE');
+	const calls = Array.from({ length: MAX_TOOL_CALLS_PER_ITERATION + 2 }, () =>
+		call('budget_month', { month: '2026-06' })
+	);
+	const { llm, requests } = scriptedLlm([{ text: '', toolCalls: calls }, answer('done')]);
+	const result = await runAssistantTurn(db, llm, null, 'q', TODAY);
+	expect(result.ok).toBe(true);
+	// every tool_use id still got a result back (API contract)
+	const toolTurn = requests[1].messages.at(-1);
+	if (toolTurn?.role !== 'tool') throw new Error('expected tool turn');
+	expect(toolTurn.results).toHaveLength(calls.length);
+	const errors = toolTurn.results.filter((r) => r.content.includes('too many tool calls'));
+	expect(errors).toHaveLength(2);
+});
+
+test('oversized tool results are truncated with a marker before crossing the seam', async () => {
+	const db = makeDb();
+	const huge = 'X'.repeat(700);
+	for (let i = 0; i < TXN_LIST_CAP; i++) txn(db, '2026-06-15', -100, `${huge}-${i}`);
+	const { llm, requests } = scriptedLlm([
+		{ text: '', toolCalls: [call('list_transactions', {})] },
+		answer('done')
+	]);
+	await runAssistantTurn(db, llm, null, 'q', TODAY);
+	const toolTurn = requests[1].messages.at(-1);
+	if (toolTurn?.role !== 'tool') throw new Error('expected tool turn');
+	expect(toolTurn.results[0].content.length).toBeLessThanOrEqual(TOOL_RESULT_MAX_CHARS + 40);
+	expect(toolTurn.results[0].content).toContain('…[truncated: result too large]');
 });

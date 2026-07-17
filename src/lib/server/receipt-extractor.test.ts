@@ -132,3 +132,20 @@ test('LLM unavailable → fail-soft: facts empty, match intact', async () => {
 	expect(rowOf(db, id).f).toBeNull();
 	expect(rowOf(db, id).s).toBe('matched');
 });
+
+test('a malformed stored receipt_json skips enrichment quietly — no LLM call, no throw (#14)', async () => {
+	const db = makeDb();
+	const id = db
+		.prepare(
+			`INSERT INTO transactions (account_id, plaid_transaction_id, date, name, merchant, amount_cents,
+			   receipt_search_state, receipt_json)
+			 VALUES (1, 'rx-bad', '2026-07-01', 'APPLE.COM/BILL', 'Apple', -24900, 'matched', '{broken')
+			 RETURNING id`
+		)
+		.pluck()
+		.get() as number;
+	const log: LlmRequest[] = [];
+	await enrichTransaction(db, cannedLlm(['{"description": "x"}'], log), id);
+	expect(log).toHaveLength(0);
+	expect(rowOf(db, id).f).toBeNull();
+});
