@@ -1,6 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import { monthSummary, spendingByCategory, fullMonthsOfHistory, IS_EXPENSE_CAT, shiftMonth } from './analytics';
 import { shiftDays } from './weekly-digest';
+import { getSetting } from './settings';
 import { budgetStatus } from './budgets';
 import { localToday } from './balances';
 import { upsertConcerns, expireConcerns, identityOf, type ConcernCandidate } from './concerns';
@@ -413,10 +414,9 @@ export const DETECTORS: DetectorDef[] = [
 ];
 
 export function knobValues(db: Database, det: DetectorDef): Record<string, number> {
-	const get = db.prepare('SELECT value FROM settings WHERE key = ?').pluck();
 	const out: Record<string, number> = {};
 	for (const k of det.knobs) {
-		const override = get.get(`detector_${det.key}_${k.key}`) as string | undefined;
+		const override = getSetting(db, `detector_${det.key}_${k.key}`);
 		const n = override == null ? NaN : Number(override);
 		out[k.key] = Number.isFinite(n) ? n : k.default;
 	}
@@ -424,10 +424,7 @@ export function knobValues(db: Database, det: DetectorDef): Record<string, numbe
 }
 
 export function detectorEnabled(db: Database, key: string): boolean {
-	return (
-		db.prepare('SELECT value FROM settings WHERE key = ?').pluck().get(`detector_${key}_enabled`) !==
-		'0'
-	);
+	return getSetting(db, `detector_${key}_enabled`) !== '0';
 }
 
 /** Detectors still below their history minimum — the UI must not imply "all clear". */

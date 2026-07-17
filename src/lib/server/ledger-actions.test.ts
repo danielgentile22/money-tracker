@@ -97,6 +97,18 @@ test('bulkLookup refuses without a connected inbox', async () => {
 	expect(res.data.message).toContain('inbox');
 });
 
+test('lookup 400s on an unknown Transaction id', async () => {
+	const db = makeDb();
+	// parsing/validation only — the matched path needs the real Gmail/LLM seams,
+	// which the factory binds internally (exercised via the resolution tests)
+	const res = (await ledgerActions(db).lookup(post({ id: '9999' }))) as {
+		status: number;
+		data: { message: string };
+	};
+	expect(res.status).toBe(400);
+	expect(res.data.message).toContain('no Transaction');
+});
+
 test('savedReportActions: save canonicalizes the query, rename validates, delete removes', async () => {
 	const db = makeDb();
 	const a = savedReportActions('/transactions', 'all', db);

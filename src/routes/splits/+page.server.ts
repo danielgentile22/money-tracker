@@ -10,6 +10,7 @@ import {
 	type PeriodView
 } from '$lib/server/split-usage';
 import { dollarsToCents } from '$lib/server/form-utils';
+import { getSetting, putSetting as putSettingIn, deleteSetting } from '$lib/server/settings';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -19,10 +20,8 @@ ensureSplitSchema(db);
 // Everything identity-shaped (names, patterns) lives in settings, never code.
 const PROVIDERS = ['claude', 'codex'];
 
-const setting = (key: string) =>
-	db.prepare('SELECT value FROM settings WHERE key = ?').pluck().get(key) as string | undefined;
-const putSetting = (key: string, value: string) =>
-	db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+const setting = (key: string) => getSetting(db, key);
+const putSetting = (key: string, value: string) => putSettingIn(db, key, value);
 
 const sharePct = () => {
 	const n = Number(setting('split_share_pct'));
@@ -196,7 +195,7 @@ export const actions = {
 		return act(() => {
 			const save = (key: string, value: string) => {
 				if (value) putSetting(key, value);
-				else db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+				else deleteSetting(db, key);
 			};
 			save('split_display_name', String(f.get('display_name') ?? '').trim());
 			save('split_partner_name', String(f.get('partner_name') ?? '').trim());
