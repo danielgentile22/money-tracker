@@ -58,6 +58,40 @@ test('search matches Merchant substring, exact amount, and Category name', () =>
 	expect(searchTransactions(db, 'nothing-matches')).toEqual([]);
 });
 
+test('search treats % and _ as literals, not LIKE wildcards', () => {
+	const db = makeDb();
+	db.prepare(
+		`INSERT INTO transactions (account_id, plaid_transaction_id, date, name, merchant, amount_cents, is_investment_activity)
+		 VALUES (1, 't5', '2026-06-25', '100% JUICE', '100% Juice', -400, 0)`
+	).run();
+	expect(searchTransactions(db, '%').map((r) => r.merchant)).toEqual(['100% Juice']);
+	expect(searchTransactions(db, '_')).toEqual([]);
+	expect(searchTransactions(db, '100% J')).toHaveLength(1);
+});
+
+test('queryLedger tolerates non-integer limit/offset (user-controlled ?page)', () => {
+	const db = makeDb();
+	const rows = queryLedger(db, { date: { preset: 'all' } }, { limit: 2.5, offset: 0.5 });
+	expect(rows.length).toBeGreaterThan(0);
+	// ?page=Infinity / NaN / oversized pages must not reach the binder as
+	// non-safe-integers (SQLITE_MISMATCH → 500); they fall back instead of throwing
+	expect(() => queryLedger(db, { date: { preset: 'all' } }, { offset: Infinity })).not.toThrow();
+	expect(() => queryLedger(db, { date: { preset: 'all' } }, { limit: NaN, offset: 2 ** 60 })).not.toThrow();
+});
+
+test('CSV guards spreadsheet formula injection in text fields', () => {
+	const db = makeDb();
+	db.prepare(
+		`INSERT INTO transactions (account_id, plaid_transaction_id, date, name, merchant, amount_cents, is_investment_activity)
+		 VALUES (1, 't6', '2026-06-26', 'EVIL', '=SUM(A1:A9)', -100, 0)`
+	).run();
+	const csv = toCsv(queryLedger(db, { date: { preset: 'all' } }));
+	expect(csv).toContain("'=SUM(A1:A9)");
+	expect(csv).not.toMatch(/^=|,=/m);
+	// numeric amount column keeps its bare minus sign
+	expect(csv).toContain(',-1.00,');
+});
+
 test('CSV escapes commas, quotes, and newlines; amounts in dollars', () => {
 	const db = makeDb();
 	const csv = toCsv(queryLedger(db, { accounts: { include: [1] }, date: { preset: 'all' } }));

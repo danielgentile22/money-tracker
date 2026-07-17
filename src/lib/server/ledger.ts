@@ -65,11 +65,15 @@ export function queryLedger(db: Database, f: FilterSet, opts: LedgerOpts = {}): 
 	// aggregate views never count Transfers (ADR-0003); their drill-downs match
 	if (opts.sign === 'spending') clauses.push('t.is_transfer = 0', 't.amount_cents < 0');
 	if (opts.sign === 'income') clauses.push('t.is_transfer = 0', 't.amount_cents > 0');
-	const limit = opts.limit ?? -1; // SQLite: LIMIT -1 = no limit
+	// bound + coerced: user-controlled ?page must never reach SQL text, and
+	// NaN/Infinity/oversized values must not reach the binder (#73)
+	const toInt = (v: number, fallback: number) =>
+		Number.isSafeInteger(Math.trunc(v)) ? Math.trunc(v) : fallback;
+	const limit = toInt(opts.limit ?? -1, -1) || -1; // SQLite: LIMIT -1 = no limit
+	const offset = Math.max(0, toInt(opts.offset ?? 0, 0));
+	params.push(limit, offset);
 	return db
-		.prepare(
-			`${BASE} WHERE ${clauses.join(' AND ')} ORDER BY t.date DESC, t.id DESC LIMIT ${limit} OFFSET ${opts.offset ?? 0}`
-		)
+		.prepare(`${BASE} WHERE ${clauses.join(' AND ')} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?`)
 		.all(...params) as LedgerRow[];
 }
 
@@ -77,24 +81,29 @@ export function queryLedger(db: Database, f: FilterSet, opts: LedgerOpts = {}): 
 export function searchTransactions(db: Database, query: string, limit = 20): LedgerRow[] {
 	const q = query.trim();
 	if (!q) return [];
-	const like = `%${q}%`;
+	const like = `%${q.replace(/[\\%_]/g, '\\$&')}%`; // % and _ are literals in search (#58)
 	const asNumber = Number(q.replace(/^\$/, ''));
 	const exactCents = Number.isFinite(asNumber) && q !== '' ? Math.round(Math.abs(asNumber) * 100) : null;
 	return db
 		.prepare(
 			`${BASE}
 			 WHERE t.is_investment_activity = 0 AND (
-			   t.merchant LIKE ? OR c.name LIKE ? ${exactCents != null ? 'OR ABS(t.amount_cents) = ?' : ''}
+			   t.merchant LIKE ? ESCAPE '\\' OR c.name LIKE ? ESCAPE '\\' ${exactCents != null ? 'OR ABS(t.amount_cents) = ?' : ''}
 			 )
-			 ORDER BY t.date DESC, t.id DESC LIMIT ${limit}`
+			 ORDER BY t.date DESC, t.id DESC LIMIT ?`
 		)
-		.all(...(exactCents != null ? [like, like, exactCents] : [like, like])) as LedgerRow[];
+		.all(
+			...(exactCents != null ? [like, like, exactCents, limit] : [like, like, limit])
+		) as LedgerRow[];
 }
 
-/** RFC-4180-style escaping: quote fields containing commas, quotes, or newlines. */
+/** RFC-4180-style escaping: quote fields containing commas, quotes, or newlines.
+ * Bank-fed text starting with a formula sigil gets a leading apostrophe so a
+ * spreadsheet renders it inert instead of executing it (#72). */
 export function toCsv(rows: LedgerRow[]): string {
 	const esc = (v: string | number | null): string => {
-		const s = v == null ? '' : String(v);
+		let s = v == null ? '' : String(v);
+		if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
 		return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 	};
 	const header = 'date,merchant,account,category,amount,pending,transfer,saved,unresolved';
