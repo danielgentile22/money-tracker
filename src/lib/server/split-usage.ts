@@ -64,7 +64,8 @@ export const realUsageFetch: UsageFetch = async (provider, since, until) => {
 		since.replaceAll('-', ''),
 		...(until ? ['--until', until.replaceAll('-', '')] : []),
 		'--instances',
-		'--json'
+		'--json',
+		'--offline' // bundled pricing only — no LiteLLM pricing-API egress (ADR-0001)
 	];
 	// ponytail: cwd-relative bin — dev server always runs from the repo root
 	const { stdout } = await promisify(execFile)(join(process.cwd(), 'node_modules', '.bin', 'ccusage'), args, {

@@ -65,9 +65,12 @@ export function queryLedger(db: Database, f: FilterSet, opts: LedgerOpts = {}): 
 	// aggregate views never count Transfers (ADR-0003); their drill-downs match
 	if (opts.sign === 'spending') clauses.push('t.is_transfer = 0', 't.amount_cents < 0');
 	if (opts.sign === 'income') clauses.push('t.is_transfer = 0', 't.amount_cents > 0');
-	// bound + coerced: user-controlled ?page must never reach SQL text (#73)
-	const limit = Math.trunc(opts.limit ?? -1) || -1; // SQLite: LIMIT -1 = no limit
-	const offset = Math.max(0, Math.trunc(opts.offset ?? 0)) || 0;
+	// bound + coerced: user-controlled ?page must never reach SQL text, and
+	// NaN/Infinity/oversized values must not reach the binder (#73)
+	const toInt = (v: number, fallback: number) =>
+		Number.isSafeInteger(Math.trunc(v)) ? Math.trunc(v) : fallback;
+	const limit = toInt(opts.limit ?? -1, -1) || -1; // SQLite: LIMIT -1 = no limit
+	const offset = Math.max(0, toInt(opts.offset ?? 0, 0));
 	params.push(limit, offset);
 	return db
 		.prepare(`${BASE} WHERE ${clauses.join(' AND ')} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?`)

@@ -70,8 +70,13 @@ test('search treats % and _ as literals, not LIKE wildcards', () => {
 });
 
 test('queryLedger tolerates non-integer limit/offset (user-controlled ?page)', () => {
-	const rows = queryLedger(makeDb(), { date: { preset: 'all' } }, { limit: 2.5, offset: 0.5 });
+	const db = makeDb();
+	const rows = queryLedger(db, { date: { preset: 'all' } }, { limit: 2.5, offset: 0.5 });
 	expect(rows.length).toBeGreaterThan(0);
+	// ?page=Infinity / NaN / oversized pages must not reach the binder as
+	// non-safe-integers (SQLITE_MISMATCH → 500); they fall back instead of throwing
+	expect(() => queryLedger(db, { date: { preset: 'all' } }, { offset: Infinity })).not.toThrow();
+	expect(() => queryLedger(db, { date: { preset: 'all' } }, { limit: NaN, offset: 2 ** 60 })).not.toThrow();
 });
 
 test('CSV guards spreadsheet formula injection in text fields', () => {
