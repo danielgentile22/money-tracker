@@ -1,5 +1,5 @@
 import type { Database } from 'better-sqlite3';
-import { monthSummary, fullMonthsOfHistory, MIN_FULL_MONTHS } from './analytics';
+import { monthSummary, fullMonthsOfHistory, MIN_FULL_MONTHS, shiftMonth } from './analytics';
 import { fmtUSD } from '../money';
 
 // Projections (PRD Phase 2): deterministic arithmetic with the assumptions
@@ -17,12 +17,6 @@ export type RunRate = {
 	months: { month: string; projected_cents: number }[];
 	assumptions: string[];
 };
-
-function shiftMonth(month: string, delta: number): string {
-	const [y, m] = month.split('-').map(Number);
-	const n = y * 12 + (m - 1) + delta;
-	return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
-}
 
 const monthName = (month: string) =>
 	new Date(`${month}-15T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });

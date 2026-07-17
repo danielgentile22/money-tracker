@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { fmtUSD } from '$lib/money';
+	import { fmtMonth } from '$lib/dates';
 	import ProgressBar from '$lib/charts/ProgressBar.svelte';
 	import Sankey from '$lib/charts/Sankey.svelte';
 	import Ledger from '$lib/Ledger.svelte';
@@ -11,9 +12,7 @@
 	let { data, form } = $props();
 
 	const snap = $derived(data.snapshot);
-	const monthLabel = $derived(
-		new Date(`${snap.month}-15`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-	);
+	const monthLabel = $derived(fmtMonth(snap.month));
 	const left = $derived(snap.left_to_budget_cents);
 	// stepping the cursor never closes an open Category (CONTEXT.md: Month cursor)
 	const monthHref = (m: string) =>
@@ -30,8 +29,7 @@
 		data.detail ? Math.max(...data.detail.trend.map((p) => p.spent_cents), 1) : 1
 	);
 	const SERIES_TONE = { upcoming: 'info', late: 'warning', ended: 'neutral' } as const;
-	const shortMonth = (m: string) =>
-		new Date(`${m}-15`).toLocaleDateString('en-US', { month: 'short' });
+	const shortMonth = (m: string) => fmtMonth(m, 'short');
 
 	// over = spent past budget + rollover; color is paired with the ▲ marker
 	const isOver = (l: (typeof snap.groups)[number]['lines'][number]) =>

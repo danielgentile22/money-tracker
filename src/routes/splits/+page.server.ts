@@ -9,6 +9,7 @@ import {
 	realUsageFetch,
 	type PeriodView
 } from '$lib/server/split-usage';
+import { dollarsToCents } from '$lib/server/form-utils';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -99,10 +100,10 @@ async function act(fn: () => void | Promise<void>) {
 	}
 }
 
-const dollarsToCents = (raw: FormDataEntryValue | null) => {
-	const n = Number(String(raw ?? '').replace(/[$,]/g, ''));
-	if (!Number.isFinite(n) || n <= 0) throw new Error('amount must be a positive dollar value');
-	return Math.round(n * 100);
+const positiveCents = (raw: FormDataEntryValue | null) => {
+	const c = dollarsToCents(raw);
+	if (c == null || c <= 0) throw new Error('amount must be a positive dollar value');
+	return c;
 };
 
 const isoDate = (raw: FormDataEntryValue | null) => {
@@ -124,7 +125,7 @@ export const actions = {
 						'INSERT INTO split_charges (provider, date, amount_cents, note) VALUES (?, ?, ?, ?) RETURNING id'
 					)
 					.pluck()
-					.get(provider, date, dollarsToCents(f.get('amount')), String(f.get('note') ?? '').trim() || null) as number;
+					.get(provider, date, positiveCents(f.get('amount')), String(f.get('note') ?? '').trim() || null) as number;
 				// the preceding period's window just ended at this charge — even a
 				// backdated entry re-derives its (possibly frozen) predecessor
 				invalidatePeriodBefore(db, provider, date, id);
@@ -161,7 +162,7 @@ export const actions = {
 		return act(() => {
 			db.prepare('INSERT INTO split_payments (date, amount_cents, note) VALUES (?, ?, ?)').run(
 				isoDate(f.get('date')),
-				dollarsToCents(f.get('amount')),
+				positiveCents(f.get('amount')),
 				String(f.get('note') ?? '').trim() || null
 			);
 		});

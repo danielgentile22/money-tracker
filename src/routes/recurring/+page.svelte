@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fmtUSD } from '$lib/money';
+	import { fmtDay } from '$lib/dates';
 	import { BellOff, Bell, TrendingUp, TrendingDown } from '@lucide/svelte';
 	import type { SeriesView } from '$lib/server/recurring-view';
 
@@ -8,9 +9,6 @@
 	const PER: Record<string, string> = { weekly: '/wk', monthly: '/mo', annual: '/yr' };
 
 	const ledgerHref = (merchant: string) => `/transactions?merchants=${encodeURIComponent(merchant)}`;
-
-	const fmtDay = (iso: string) =>
-		new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 	// price creep: latest amount drifted off the series' typical amount
 	const drift = (s: SeriesView) => s.last_amount_cents - s.typical_amount_cents;

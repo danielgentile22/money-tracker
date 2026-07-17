@@ -1,7 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import { isProtectedCategory } from './categories';
 import { budgetMonth } from './budgets';
-import { monthRange, shiftMonth } from './analytics';
+import { categoryTrend, shiftMonth, type TrendPoint } from './analytics';
 import { buildRecurringView, type SeriesRow, type SeriesView } from './recurring-view';
 
 // Category detail engine (ADR-0008, slice 4): everything the open-Category
@@ -22,30 +22,15 @@ export type CategoryDetail = {
 	series: SeriesView[]; // active first (by next expected), then ended
 };
 
-export type TrendPoint = { month: string; spent_cents: number };
+export type { TrendPoint };
 
 const TREND_MONTHS = 12;
 
 // ponytail: spending magnitude only — an Income Category's trend reads zero;
 // its Ledger still shows the paychecks. Extend to income if the owner asks.
+// The math itself is analytics.categoryTrend — this is just the 12-month window (#53).
 function spendingTrend(db: Database, categoryId: number, month: string): TrendPoint[] {
-	const from = shiftMonth(month, -(TREND_MONTHS - 1));
-	// Refunds net against spend; the `g.name != 'Income'` guard keeps an Income
-	// Category's trend at zero (its paychecks aren't spend) — same as before (#24).
-	const rows = db
-		.prepare(
-			`SELECT substr(t.date, 1, 7) AS month, SUM(-t.amount_cents) AS spent
-			 FROM transactions t
-			 LEFT JOIN categories c ON c.id = t.category_id
-			 LEFT JOIN category_groups g ON g.id = c.group_id
-			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
-			   AND (t.amount_cents < 0 OR (c.id IS NOT NULL AND g.name != 'Income'))
-			   AND t.category_id = ? AND t.date >= ? AND t.date < ?
-			 GROUP BY month`
-		)
-		.all(categoryId, `${from}-01`, `${shiftMonth(month, 1)}-01`) as { month: string; spent: number }[];
-	const spent = new Map(rows.map((r) => [r.month, r.spent]));
-	return monthRange(from, month).map((m) => ({ month: m, spent_cents: spent.get(m) ?? 0 }));
+	return categoryTrend(db, categoryId, shiftMonth(month, -(TREND_MONTHS - 1)), month);
 }
 
 // Series have no category axis (keyed on Merchant) — "this Category's series"

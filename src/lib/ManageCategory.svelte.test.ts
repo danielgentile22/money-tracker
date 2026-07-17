@@ -5,14 +5,8 @@ import { mount, unmount, flushSync } from 'svelte';
 import { page } from '$app/state';
 import ManageCategory from './ManageCategory.svelte';
 
+// dialog.showModal polyfill lives in src/test/component-setup.ts (#80)
 beforeEach(() => {
-	HTMLDialogElement.prototype.showModal = function () {
-		this.setAttribute('open', '');
-	};
-	HTMLDialogElement.prototype.close = function () {
-		this.removeAttribute('open');
-		this.dispatchEvent(new Event('close'));
-	};
 	// form actions carry the page's query (the cursor month) via actionUrl
 	page.url = new URL('http://localhost:5273/categories?month=2026-06') as typeof page.url;
 });

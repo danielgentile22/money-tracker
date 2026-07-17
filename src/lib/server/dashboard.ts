@@ -8,6 +8,8 @@ import { queryLedger } from './ledger';
 import { activeConcerns, bucketFor, type Bucket } from './concerns';
 import { runRateProjection, type RunRate, type Insufficient } from './projections';
 import { getInsight, priorMonth, type InsightRow } from './insights';
+import { dataQualityCounts } from './digest-common';
+import { getSetting, putSetting } from './settings';
 import { listRecaps } from './recap';
 
 // Session 4: the widget registry — the one static list everything else is
@@ -40,9 +42,7 @@ const KEY = 'dashboard_layout';
 
 /** Saved JSON read leniently: anything non-array (absent, corrupt) is []. */
 function readSaved(db: Database, key: string): unknown[] {
-	const raw = db.prepare('SELECT value FROM settings WHERE key = ?').pluck().get(key) as
-		| string
-		| undefined;
+	const raw = getSetting(db, key);
 	if (!raw) return [];
 	try {
 		const parsed = JSON.parse(raw);
@@ -90,7 +90,8 @@ export function saveLayout(db: Database, layout: LayoutEntry[]): void {
 		if (!def.sizes.includes(e.size)) throw new Error(`unsupported size for ${def.id}: ${e.size}`);
 		seen.add(def.id);
 	}
-	db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+	putSetting(
+		db,
 		KEY,
 		JSON.stringify(layout.map((e) => ({ id: e.id, hidden: !!e.hidden, size: e.size })))
 	);
@@ -144,7 +145,8 @@ export function saveSidebar(db: Database, entries: NavEntry[]): void {
 		if (seen.has(e.id)) throw new Error(`duplicate section: ${e.id}`);
 		seen.add(e.id);
 	}
-	db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+	putSetting(
+		db,
 		NAV_KEY,
 		JSON.stringify(entries.map((e) => ({ id: e.id, hidden: e.id === '/settings' ? false : !!e.hidden })))
 	);
@@ -152,10 +154,7 @@ export function saveSidebar(db: Database, entries: NavEntry[]): void {
 
 /** Badge on the Transactions → Review fold-in link: open items only, all kinds. */
 export function openReviewCount(db: Database): number {
-	return db
-		.prepare("SELECT COUNT(*) FROM review_items WHERE status = 'open'")
-		.pluck()
-		.get() as number;
+	return dataQualityCounts(db).open_review_items;
 }
 
 export type Snapshot = {

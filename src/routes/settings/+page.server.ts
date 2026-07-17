@@ -12,7 +12,8 @@ import {
 	isBackfilling,
 	backfillProgress,
 	receiptScanStats,
-	hasConnectedInbox
+	hasConnectedInbox,
+	scanCounts
 } from '$lib/server/backfill';
 import { householdContextBlock } from '$lib/server/assistant';
 import { setSecret, deleteSecret } from '$lib/server/keychain';
@@ -71,27 +72,9 @@ export const load: PageServerLoad = ({ url }) => {
 	});
 	const assumedReturn = (setting('assumed_return_pct') as string) ?? '5';
 
-	// what each scan button would touch — same SQL shape as runBackfill, so the
-	// confirm popup's numbers match what actually runs
-	const count = (sql: string) => db.prepare(sql).pluck().get() as number;
-	const cat = (w: string) =>
-		count(`SELECT COUNT(*) FROM transactions
-		       WHERE category_source IN ('plaid', 'llm', 'llm+receipt')
-		         AND is_transfer = 0 AND is_investment_activity = 0 ${w}`);
-	const search = (w: string) =>
-		count(`SELECT COUNT(*) FROM transactions
-		       WHERE pending = 0 AND is_transfer = 0 AND is_investment_activity = 0
-		         AND amount_cents < 0 ${w}`);
-	const month = "AND date >= date('now', '-1 month')";
-	const scanPreview = {
-		all: { categorize: cat(''), search: search('') },
-		month: {
-			categorize: cat(month),
-			search: search(
-				`${month} AND (receipt_search_state IS NULL OR receipt_search_state != 'matched')`
-			)
-		}
-	};
+	// what each scan button would touch — scanCounts shares the scans' own
+	// WHERE fragments, so the confirm popup's numbers match what actually runs
+	const scanPreview = { all: scanCounts(db, 'all'), month: scanCounts(db, 'month') };
 
 	return {
 		widgets: WIDGETS,

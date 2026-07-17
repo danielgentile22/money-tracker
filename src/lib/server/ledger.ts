@@ -88,7 +88,7 @@ export function searchTransactions(db: Database, query: string, limit = 20): Led
 		.prepare(
 			`${BASE}
 			 WHERE t.is_investment_activity = 0 AND (
-			   t.merchant LIKE ? ESCAPE '\\' OR c.name LIKE ? ESCAPE '\\' ${exactCents != null ? 'OR ABS(t.amount_cents) = ?' : ''}
+			   COALESCE(t.merchant, t.name) LIKE ? ESCAPE '\\' OR c.name LIKE ? ESCAPE '\\' ${exactCents != null ? 'OR ABS(t.amount_cents) = ?' : ''}
 			 )
 			 ORDER BY t.date DESC, t.id DESC LIMIT ?`
 		)

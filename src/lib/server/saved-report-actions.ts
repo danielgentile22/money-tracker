@@ -1,10 +1,13 @@
-import { db } from '$lib/server/db';
+import type { Database } from 'better-sqlite3';
+import { db as defaultDb } from '$lib/server/db';
 import { parseFilters, serializeFilters, type DatePreset } from '$lib/server/filters';
 import { saveReport, renameReport, deleteReport } from '$lib/server/saved-reports';
 import { fail, type Actions } from '@sveltejs/kit';
 
-/** /reports' form actions (sole consumer since slice 5): a saved report is a name on a canonical URL. */
-export function savedReportActions(path: string, defaultPreset: DatePreset): Actions {
+/** /reports' form actions (sole consumer since slice 5): a saved report is a
+ * name on a canonical URL. db is injectable for tests (#37); returns are
+ * inferred via satisfies so the route's form prop keeps its fields. */
+export function savedReportActions(path: string, defaultPreset: DatePreset, db: Database = defaultDb) {
 	return {
 		saveReport: async ({ request }) => {
 			const form = await request.formData();
@@ -31,5 +34,5 @@ export function savedReportActions(path: string, defaultPreset: DatePreset): Act
 			deleteReport(db, Number(form.get('id')));
 			return { ok: true };
 		}
-	};
+	} satisfies Actions;
 }

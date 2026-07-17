@@ -52,9 +52,10 @@ diagnose, tdd, improve-codebase-architecture, zoom-out):
   `Origin: http://localhost:<port>` header.
 - **Don't annotate a SvelteKit action factory `(): Actions`** — it erases per-action
   return types and the route's `form` prop loses fields; use `satisfies Actions` on the
-  returned object (`ledgerActions` does it right; `savedReportActions` predates this).
+  returned object (both `ledgerActions` and `savedReportActions` do this).
 - **Component tests**: vitest has two projects — `server` (node, `*.test.ts`) and
   `component` (jsdom, `*.svelte.test.ts`, `$app/*` aliased to `src/test/app-state-stub.ts`).
-  jsdom lacks `dialog.showModal`; polyfill in `beforeEach` (see `Ledger.svelte.test.ts`).
+  jsdom lacks `dialog.showModal`; the polyfill is a `setupFiles` entry
+  (`src/test/component-setup.ts`). Shared DB fixtures live in `src/test/db.ts`.
 - **Playwright MCP snapshots** land in `.playwright-mcp/` and contain real merchant/amount
   rows — delete them after browser verification.
