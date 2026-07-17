@@ -5,6 +5,7 @@
 import type { Database } from 'better-sqlite3';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { join } from 'node:path';
 
 // This feature owns its schema instead of joining the migration chain: these
 // idempotent statements run when the /splits route module loads, so a fresh
@@ -51,12 +52,12 @@ export type UsageDay = { date: string; totalCost: number };
 export type UsageJson = { projects: Record<string, UsageDay[]> };
 export type UsageFetch = (provider: string, since: string, until: string | null) => Promise<UsageJson>;
 
-/** Shells out to the ccusage CLI. Window filtering stays in computeShare, so
- * the extra day --until fetches (it's inclusive) never leaks into a period. */
+/** Shells out to the ccusage CLI — the exact-pinned devDependency's local
+ * binary, never `npx -y ccusage@latest` (unpinned remote code + network
+ * egress, both barred by ADR-0001). Window filtering stays in computeShare,
+ * so the extra day --until fetches (it's inclusive) never leaks into a period. */
 export const realUsageFetch: UsageFetch = async (provider, since, until) => {
 	const args = [
-		'-y',
-		'ccusage@latest',
 		provider,
 		'daily',
 		'--since',
@@ -65,7 +66,8 @@ export const realUsageFetch: UsageFetch = async (provider, since, until) => {
 		'--instances',
 		'--json'
 	];
-	const { stdout } = await promisify(execFile)('npx', args, {
+	// ponytail: cwd-relative bin — dev server always runs from the repo root
+	const { stdout } = await promisify(execFile)(join(process.cwd(), 'node_modules', '.bin', 'ccusage'), args, {
 		timeout: 120_000,
 		maxBuffer: 64 * 1024 * 1024
 	});

@@ -13,6 +13,7 @@
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@types/better-sqlite3": "^7.6.13",
+		"ccusage": "20.0.17",
 		"jsdom": "^29.1.1",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
