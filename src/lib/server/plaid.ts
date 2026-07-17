@@ -1,14 +1,14 @@
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
-import { getSecret, setSecret, deleteSecret } from './keychain';
+import { getSecret, setSecret, deleteSecret, hasSecret } from './keychain';
 import { db } from './db';
 import { upsertAccounts, type PlaidSource, type SourceInvestmentTxn } from './sync';
-import { mapAccount, mapTransaction, mapInvestmentTxn } from './plaid-map';
+import { mapAccount, mapTransaction, mapInvestmentTxn, itemAlreadyGone } from './plaid-map';
 
 // sandbox | production — flipped at p1-11 cutover. Secrets differ per env.
 export const PLAID_ENV = process.env.PLAID_ENV ?? 'sandbox';
 
 export function plaidReady(): boolean {
-	return getSecret('plaid-client-id') !== null && getSecret(`plaid-secret-${PLAID_ENV}`) !== null;
+	return hasSecret('plaid-client-id') && hasSecret(`plaid-secret-${PLAID_ENV}`);
 }
 
 function client(): PlaidApi {
@@ -80,7 +80,8 @@ export async function exchangePublicToken(
 		)
 		.pluck()
 		.get(institutionName, item_id) as number;
-	await refreshAccounts(connectionId);
+	// best-effort: the exchange already succeeded; accounts arrive on first sync
+	await refreshAccounts(connectionId).catch(() => {});
 	return connectionId;
 }
 
@@ -142,9 +143,15 @@ export async function removeConnection(connectionId: number): Promise<void> {
 		.get(connectionId) as { plaid_item_id: string } | undefined;
 	if (!row) return;
 	try {
-		await client().itemRemove({ access_token: accessTokenFor(row.plaid_item_id) });
-	} catch {
-		// token already gone or Item already removed — still clean up locally
+		// token first: if it's already gone that must reach the classifier below,
+		// not be preempted by client() complaining about missing Plaid keys
+		const access_token = accessTokenFor(row.plaid_item_id);
+		await client().itemRemove({ access_token });
+	} catch (e) {
+		// token already gone or Item already removed — still clean up locally;
+		// transient failures rethrow so the token survives for a retry (else the
+		// Item stays live at Plaid with no credential left to revoke it)
+		if (!itemAlreadyGone(e)) throw e;
 	}
 	deleteSecret(`plaid-access-token-${row.plaid_item_id}`);
 	db.transaction(() => {

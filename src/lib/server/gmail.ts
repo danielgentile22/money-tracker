@@ -1,4 +1,4 @@
-import { getSecret, setSecret, deleteSecret } from './keychain';
+import { getSecret, setSecret, deleteSecret, hasSecret } from './keychain';
 import { db } from './db';
 import { buildReceiptQuery } from './matcher';
 import { receiptWindowDays } from './resolution';
@@ -14,7 +14,7 @@ import { receiptWindowDays } from './resolution';
 const SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 
 export function googleReady(): boolean {
-	return getSecret('google-client-id') !== null && getSecret('google-client-secret') !== null;
+	return hasSecret('google-client-id') && hasSecret('google-client-secret');
 }
 
 export type InboxRow = {
@@ -170,6 +170,8 @@ export function beginEnrollment(origin: string): string {
 				'  security add-generic-password -s money-tracker -a google-client-secret -w <secret>'
 		);
 	}
+	// sweep abandoned enrollments so the map can't grow for the process lifetime
+	for (const [s, exp] of pendingStates) if (exp < Date.now()) pendingStates.delete(s);
 	const state = crypto.randomUUID();
 	pendingStates.set(state, Date.now() + 10 * 60_000);
 	const params = new URLSearchParams({

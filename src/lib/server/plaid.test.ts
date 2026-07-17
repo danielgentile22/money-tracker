@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import type { Transaction, AccountBase, InvestmentTransaction } from 'plaid';
-import { toCents, mapAccount, mapTransaction, mapInvestmentTxn } from './plaid-map';
+import { toCents, mapAccount, mapTransaction, mapInvestmentTxn, itemAlreadyGone } from './plaid-map';
 import { ownerSignedBalance } from './sync';
 
 // The Plaid money boundary (ADR-0009): the single float-dollars→integer-cents
@@ -106,4 +106,18 @@ test('mapInvestmentTxn marks only boundary-crossing cash flows external', () => 
 
 	// sign flip still applies
 	expect(mapInvestmentTxn(inv({ amount: 250 })).amount_cents).toBe(-25_000);
+});
+
+test('itemAlreadyGone swallows only gone-Item errors, not transient failures', () => {
+	const plaidErr = (error_code: string) => ({ response: { data: { error_code } } });
+	expect(itemAlreadyGone(plaidErr('ITEM_NOT_FOUND'))).toBe(true);
+	expect(itemAlreadyGone(plaidErr('INVALID_ACCESS_TOKEN'))).toBe(true);
+	expect(itemAlreadyGone(new Error('No access token in Keychain for Connection abc'))).toBe(true);
+
+	// transient: must rethrow so the token survives for a retry
+	expect(itemAlreadyGone(plaidErr('RATE_LIMIT_EXCEEDED'))).toBe(false);
+	expect(itemAlreadyGone(plaidErr('INTERNAL_SERVER_ERROR'))).toBe(false);
+	expect(itemAlreadyGone(new Error('fetch failed'))).toBe(false);
+	expect(itemAlreadyGone(new Error('Keychain unavailable reading plaid-access-token-x'))).toBe(false);
+	expect(itemAlreadyGone(undefined)).toBe(false);
 });
