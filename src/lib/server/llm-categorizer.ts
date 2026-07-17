@@ -74,12 +74,28 @@ export function buildCategorizerPrompt(
 }
 
 /** The receipt evidence line: what the vendor's own email said the charge was for. */
+/** #61: parsed facts, or null when the stored blob is malformed/unusable. */
+function usableFacts(c: LlmCharge): ReceiptFacts | null {
+	if (!c.receipt_facts_json) return null;
+	let facts: ReceiptFacts;
+	try {
+		facts = JSON.parse(c.receipt_facts_json) as ReceiptFacts;
+	} catch {
+		return null;
+	}
+	return facts && typeof facts.description === 'string' ? facts : null;
+}
+
 function receiptLine(c: LlmCharge): string {
-	if (!c.receipt_facts_json) return '';
-	const facts = JSON.parse(c.receipt_facts_json) as ReceiptFacts;
-	const items = facts.items.length ? `; items: ${facts.items.map((it) => it.name).join(', ')}` : '';
+	// #61: one malformed row must not abort the whole categorization batch
+	const facts = usableFacts(c);
+	if (!facts) return '';
+	const items = Array.isArray(facts.items)
+		? facts.items.filter((it) => typeof it?.name === 'string').map((it) => it.name)
+		: [];
+	const itemsPart = items.length ? `; items: ${items.join(', ')}` : '';
 	const vendor = facts.vendor ? ` (vendor: ${facts.vendor})` : '';
-	return `\n   receipt: ${facts.description}${vendor}${items}`;
+	return `\n   receipt: ${facts.description}${vendor}${itemsPart}`;
 }
 
 /**
@@ -160,7 +176,9 @@ export async function runLlmCategorization(
 			throw e;
 		}
 		const assignments = parseAssignments(reply, batch, taxonomy);
-		const sourceOf = new Map(batch.map((c) => [c.id, c.receipt_facts_json ? 'llm+receipt' : 'llm']));
+		// provenance follows what the model actually saw: malformed facts sent no
+		// receipt line, so the assignment is bank-evidence-only (codex review P2)
+		const sourceOf = new Map(batch.map((c) => [c.id, usableFacts(c) ? 'llm+receipt' : 'llm']));
 		db.transaction(() => {
 			for (const [txnId, categoryId] of assignments)
 				apply.run(categoryId, sourceOf.get(txnId), txnId);

@@ -8,6 +8,13 @@ import { getSecret } from './keychain';
 //   set via Settings, or: security add-generic-password -s money-tracker -a anthropic-api-key -w <key>
 // Models are settings with defaults: Sonnet everywhere (2026-07-05, was Haiku for receipts).
 
+// #14: explicit per-request timeouts (TS SDK takes milliseconds; default is 10min).
+// Interactive chat turns block a UI request; batch prompts (categorizer/extractor)
+// tolerate more. One retry — fail-soft callers reschedule anyway.
+const CHAT_TIMEOUT_MS = 60_000;
+const BATCH_TIMEOUT_MS = 120_000;
+const MAX_RETRIES = 1;
+
 export type LlmRequest = { model: string; system?: string; prompt: string; maxTokens: number };
 export type Llm = (req: LlmRequest) => Promise<string>;
 
@@ -53,14 +60,18 @@ export type LlmChat = (req: LlmChatRequest) => Promise<LlmChatReply>;
 export const realLlmChat: LlmChat = async ({ model, system, messages, tools, maxTokens }) => {
 	const apiKey = getSecret('anthropic-api-key');
 	if (!apiKey) throw new LlmUnavailable('no Anthropic API key in Keychain');
-	const client = new Anthropic({ apiKey });
+	const client = new Anthropic({ apiKey, timeout: CHAT_TIMEOUT_MS, maxRetries: MAX_RETRIES });
 	const mapped: Anthropic.MessageParam[] = messages.map((m) => {
 		if (m.role === 'user') return { role: 'user', content: m.content };
 		if (m.role === 'assistant')
 			return {
 				role: 'assistant',
 				content: [
-					...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
+					// #22: an empty assistant turn (no text, no tool calls) would render
+					// as content: [] and 400 the whole conversation on replay
+					...(m.content || !m.toolCalls?.length
+						? [{ type: 'text' as const, text: m.content || '(no reply)' }]
+						: []),
 					...(m.toolCalls ?? []).map((c) => ({
 						type: 'tool_use' as const,
 						id: c.id,
@@ -86,6 +97,9 @@ export const realLlmChat: LlmChat = async ({ model, system, messages, tools, max
 			messages: mapped,
 			...(tools.length && { tools: tools as Anthropic.Tool[] })
 		});
+		// #62: a max_tokens stop means the reply (or a tool call) was cut mid-thought
+		if (res.stop_reason === 'max_tokens')
+			console.warn(`llm: chat reply truncated at max_tokens (model ${model})`);
 		return {
 			text: res.content
 				.filter((b) => b.type === 'text')
@@ -103,7 +117,7 @@ export const realLlmChat: LlmChat = async ({ model, system, messages, tools, max
 export const realLlm: Llm = async ({ model, system, prompt, maxTokens }) => {
 	const apiKey = getSecret('anthropic-api-key');
 	if (!apiKey) throw new LlmUnavailable('no Anthropic API key in Keychain');
-	const client = new Anthropic({ apiKey });
+	const client = new Anthropic({ apiKey, timeout: BATCH_TIMEOUT_MS, maxRetries: MAX_RETRIES });
 	try {
 		const res = await client.messages.create({
 			model,
@@ -111,6 +125,10 @@ export const realLlm: Llm = async ({ model, system, prompt, maxTokens }) => {
 			system,
 			messages: [{ role: 'user', content: prompt }]
 		});
+		// #62: truncated categorizer/extractor replies parse as partial or bad JSON —
+		// strict parsers already drop those rows, but make the cause visible
+		if (res.stop_reason === 'max_tokens')
+			console.warn(`llm: reply truncated at max_tokens (model ${model})`);
 		return res.content
 			.filter((b) => b.type === 'text')
 			.map((b) => b.text)

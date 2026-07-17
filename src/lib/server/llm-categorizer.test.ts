@@ -269,3 +269,48 @@ test('recategorizeAll respects llm and llm+receipt rows and never calls a model'
 	expect(txnState(db, id)).toEqual({ category: 'Coffee', source: 'llm' });
 	expect(txnState(db, enriched)).toEqual({ category: 'Entertainment', source: 'llm+receipt' });
 });
+
+// ---------- malformed receipt facts never abort a batch (#14) ----------
+
+test('a malformed receipt_facts_json row drops its receipt line, keeps the batch alive', () => {
+	const taxonomy: { id: number; name: string; group: string }[] = [
+		{ id: 1, name: 'Coffee', group: 'Food' }
+	];
+	const charges: LlmCharge[] = [
+		{
+			id: 1, name: 'A', merchant: 'A', amount_cents: -100, date: '2026-06-01',
+			pfc_primary: null, pfc_detailed: null, pfc_confidence: null,
+			account_type: 'depository', payment_channel: null,
+			receipt_facts_json: 'not json {'
+		},
+		{
+			id: 2, name: 'B', merchant: 'B', amount_cents: -200, date: '2026-06-01',
+			pfc_primary: null, pfc_detailed: null, pfc_confidence: null,
+			account_type: 'depository', payment_channel: null,
+			receipt_facts_json: '{"description": "ok", "items": "not-an-array"}'
+		},
+		{
+			id: 3, name: 'C', merchant: 'C', amount_cents: -300, date: '2026-06-01',
+			pfc_primary: null, pfc_detailed: null, pfc_confidence: null,
+			account_type: 'depository', payment_channel: null,
+			receipt_facts_json: '{"description": "Latte", "vendor": "Cafe", "items": [{"name": "Latte"}]}'
+		}
+	];
+	const prompt = buildCategorizerPrompt(charges, taxonomy);
+	expect(prompt).toContain('merchant "A"'); // malformed row still listed, minus receipt line
+	expect(prompt).toContain('receipt: ok'); // bad items ignored, description survives
+	expect(prompt).toContain('receipt: Latte (vendor: Cafe); items: Latte');
+});
+
+test('runLlmCategorization survives a malformed receipt_facts_json row end to end', async () => {
+	const db = makeDb();
+	const id = insertTxn(db, 'bad-facts', 'plaid', { receipt_facts_json: '{broken' });
+	const replies: string[] = [`{"1": "Coffee"}`];
+	let i = 0;
+	const llm: Llm = async () => replies[i++];
+	await runLlmCategorization(db, llm, [id]);
+	const row = db
+		.prepare('SELECT category_source AS s FROM transactions WHERE id = ?')
+		.get(id) as { s: string };
+	expect(row.s).toBe('llm'); // categorized on bank evidence alone — the broken blob sent nothing
+});
