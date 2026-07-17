@@ -28,6 +28,20 @@ export function getSecret(name: string): string | null {
 	}
 }
 
+/**
+ * Non-fatal probe for ready() checks (root layout, page loads, sync ticks):
+ * an unavailable Keychain reads as "not configured" instead of 500-ing every
+ * route. Operational reads stay on getSecret, which throws so transient
+ * failures never masquerade as revoked credentials.
+ */
+export function hasSecret(name: string): boolean {
+	try {
+		return getSecret(name) !== null;
+	} catch {
+		return false;
+	}
+}
+
 // ponytail: secret passes through argv, briefly visible in `ps` — acceptable on a
 // single-user Mac; switch to `security -i` interactive mode if that ever changes.
 export function setSecret(name: string, value: string): void {

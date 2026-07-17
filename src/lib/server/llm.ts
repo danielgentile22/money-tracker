@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Database } from 'better-sqlite3';
-import { getSecret } from './keychain';
+import { getSecret, hasSecret } from './keychain';
 
 // The single seam to the Anthropic API. Everything upstream (categorizer,
 // extractor, insights) takes an Llm function so tests run on canned replies; the real
@@ -22,7 +22,7 @@ export type Llm = (req: LlmRequest) => Promise<string>;
 export class LlmUnavailable extends Error {}
 
 export function anthropicReady(): boolean {
-	return getSecret('anthropic-api-key') !== null;
+	return hasSecret('anthropic-api-key');
 }
 
 const MODEL_DEFAULTS: Record<string, string> = {

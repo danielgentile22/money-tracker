@@ -2,7 +2,7 @@ import { test, expect, vi } from 'vitest';
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from 'node:child_process';
-import { getSecret, deleteSecret } from './keychain';
+import { getSecret, deleteSecret, hasSecret } from './keychain';
 
 const mock = vi.mocked(execFileSync);
 
@@ -53,4 +53,13 @@ test('deleteSecret ignores already-gone but rethrows real failures', () => {
 		throw securityError(36);
 	});
 	expect(() => deleteSecret('stuck')).toThrow(/Keychain unavailable/);
+});
+
+test('hasSecret is a non-fatal probe: unavailable Keychain reads as not configured', () => {
+	mock.mockImplementation(() => {
+		throw securityError(36);
+	});
+	expect(hasSecret('plaid-client-id')).toBe(false);
+	mock.mockReturnValue('key\n');
+	expect(hasSecret('plaid-client-id')).toBe(true);
 });
