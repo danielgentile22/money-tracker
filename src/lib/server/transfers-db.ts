@@ -37,7 +37,7 @@ export function runTransferDetection(db: Database): void {
 			`SELECT t.id, t.account_id, t.date, t.amount_cents,
 			        t.plaid_category_primary, t.plaid_category_detailed
 			 FROM transactions t
-			 WHERE t.is_transfer = 0 AND t.pending = 0 AND t.transfer_peer_id IS NULL
+			 WHERE t.is_transfer = 0 AND t.is_excluded = 0 AND t.pending = 0 AND t.transfer_peer_id IS NULL
 			   AND t.is_investment_activity = 0`
 		)
 		.all() as {

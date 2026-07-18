@@ -54,7 +54,7 @@ export async function runReceiptSearch(
 	const charges = db
 		.prepare(
 			`SELECT id, date, amount_cents, merchant, name FROM transactions
-			 WHERE unresolved = 1 AND pending = 0 AND is_transfer = 0 AND is_investment_activity = 0
+			 WHERE unresolved = 1 AND pending = 0 AND is_transfer = 0 AND is_excluded = 0 AND is_investment_activity = 0
 			   AND (receipt_search_state IS NULL OR receipt_search_state = 'pending')
 			 ORDER BY date DESC`
 		)

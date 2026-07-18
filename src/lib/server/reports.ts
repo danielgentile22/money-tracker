@@ -28,8 +28,8 @@ export type ReportData = {
 };
 
 const SIGN = {
-	spending: { cond: 't.is_transfer = 0 AND t.amount_cents < 0', sum: '-t.amount_cents' },
-	income: { cond: 't.is_transfer = 0 AND t.amount_cents > 0', sum: 't.amount_cents' }
+	spending: { cond: 't.is_transfer = 0 AND t.is_excluded = 0 AND t.amount_cents < 0', sum: '-t.amount_cents' },
+	income: { cond: 't.is_transfer = 0 AND t.is_excluded = 0 AND t.amount_cents > 0', sum: 't.amount_cents' }
 } as const;
 
 /** Months the filter resolves to; 'all' stretches from the first matching row to today. */

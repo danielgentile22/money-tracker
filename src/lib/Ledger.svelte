@@ -216,6 +216,11 @@
 						{#if row.is_transfer === 1}
 							<span class="chip" data-tone="info">transfer</span>
 						{/if}
+						{#if row.is_excluded === 1}
+							<span class="chip" data-tone="neutral" title="left out of totals, graphs, and budgets">
+								excluded
+							</span>
+						{/if}
 						{#if row.is_saved === 1}
 							<span class="chip" data-tone="success">saved</span>
 						{/if}
@@ -279,6 +284,18 @@
 				</a>
 			</div>
 		{/if}
+
+		<form method="POST" action={act('toggleExclude')} class="section">
+			<input type="hidden" name="id" value={editing.id} />
+			<button class="btn btn-secondary btn-sm" type="submit">
+				{editing.is_excluded === 1 ? 'Include in totals' : 'Exclude from totals'}
+			</button>
+			<p class="t-body-sm t-muted" style="margin-top: 0.35rem;">
+				{editing.is_excluded === 1
+					? 'Counted in totals, graphs, and budgets.'
+					: 'Kept out of totals, graphs, and budgets. Still counts toward the Account balance.'}
+			</p>
+		</form>
 
 		{#if detail?.recurring}
 			<div class="section t-body-sm">

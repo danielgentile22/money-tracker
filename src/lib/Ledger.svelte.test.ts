@@ -21,6 +21,7 @@ const row = (over: Record<string, unknown> = {}) => ({
 	pending: 0,
 	unresolved: 0,
 	is_transfer: 0,
+	is_excluded: 0,
 	is_saved: 0,
 	category_source: 'rule',
 	receipt_search_state: null,

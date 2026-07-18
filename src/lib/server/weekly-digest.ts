@@ -50,9 +50,9 @@ function figures(db: Database, weekStart: string): WeekFigures {
 	const row = db
 		.prepare(
 			`SELECT
-			   COALESCE(SUM(CASE WHEN is_transfer = 0 AND amount_cents > 0 THEN amount_cents END), 0) AS income,
-			   COALESCE(SUM(CASE WHEN is_transfer = 0 AND amount_cents < 0 THEN -amount_cents END), 0) AS expenses,
-			   COALESCE(SUM(is_transfer = 0), 0) AS txn_count
+			   COALESCE(SUM(CASE WHEN is_transfer = 0 AND is_excluded = 0 AND amount_cents > 0 THEN amount_cents END), 0) AS income,
+			   COALESCE(SUM(CASE WHEN is_transfer = 0 AND is_excluded = 0 AND amount_cents < 0 THEN -amount_cents END), 0) AS expenses,
+			   COALESCE(SUM(is_transfer = 0 AND is_excluded = 0), 0) AS txn_count
 			 FROM transactions
 			 WHERE is_investment_activity = 0 AND date >= ? AND date < ?`
 		)
@@ -71,7 +71,7 @@ function categorySpend(db: Database, weekStart: string): Map<string, number> {
 		.prepare(
 			`SELECT COALESCE(c.name, 'Uncategorized') AS cat_name, SUM(-t.amount_cents) AS spent_cents
 			 FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.amount_cents < 0
+			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.is_excluded = 0 AND t.amount_cents < 0
 			   AND t.date >= ? AND t.date < ?
 			 GROUP BY cat_name ORDER BY spent_cents DESC`
 		)
@@ -95,7 +95,7 @@ export function buildWeeklyDigest(db: Database, weekStart: string): WeeklyDigest
 			`SELECT t.date, COALESCE(t.merchant, t.name) AS description, -t.amount_cents AS spent_cents,
 			        c.name AS category
 			 FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.amount_cents < 0
+			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.is_excluded = 0 AND t.amount_cents < 0
 			   AND t.recurring_series_id IS NULL AND -t.amount_cents >= ?
 			   AND t.date >= ? AND t.date < ?
 			 ORDER BY spent_cents DESC LIMIT 5`
