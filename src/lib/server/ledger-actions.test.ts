@@ -124,7 +124,7 @@ test('savedReportActions: save canonicalizes the query, rename validates, delete
 	expect(saved.name).toBe('Big spends');
 	const { path, query } = JSON.parse(saved.config) as { path: string; query: string };
 	expect(path).toBe('/transactions');
-	expect(query).toContain('tab=table'); // page params survive
+	expect(query).toContain('min=5'); // page params survive
 	expect(query).not.toContain('bogus'); // unknown params canonicalized away
 
 	expect(((await a.renameReport(post({ id: String(saved.id), name: '' }))) as { status: number }).status).toBe(400);

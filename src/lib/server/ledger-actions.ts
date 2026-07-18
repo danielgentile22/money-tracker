@@ -4,7 +4,7 @@ import { formId } from '$lib/server/form-id';
 import { applyCorrection, applyBulkCorrection } from '$lib/server/corrections';
 import { addTag, attachTag, detachTag, bulkAttach } from '$lib/server/tags';
 import { triggerLookup, enrichAndCategorize } from '$lib/server/resolution';
-import { runLookupBatch } from '$lib/server/backfill';
+import { runLookupBatch, hasConnectedInbox } from '$lib/server/backfill';
 import { realReceiptSource } from '$lib/server/gmail';
 import { realLlm } from '$lib/server/llm';
 import { fail, type Actions } from '@sveltejs/kit';
@@ -77,6 +77,8 @@ export function ledgerActions(db: Database = defaultDb) {
 			const f = await request.formData();
 			const ids = f.getAll('ids').map(Number).filter(Boolean);
 			if (ids.length === 0) return fail(400, { message: 'select Transactions first' });
+			if (!hasConnectedInbox(db))
+				return fail(400, { message: 'no connected inbox — re-enroll Gmail in Settings' });
 			void runLookupBatch(db, realReceiptSource, realLlm, ids).catch((e) =>
 				console.error('bulk lookup failed:', e)
 			);
