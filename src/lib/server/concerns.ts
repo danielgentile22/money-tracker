@@ -99,13 +99,18 @@ export function expireConcerns(db: Database, firedIdentities: Set<string>): void
 	})();
 }
 
-export function dismissConcern(db: Database, id: number): void {
-	db.prepare(
-		`UPDATE concerns SET status = 'dismissed',
+/** True when an active concern was actually dismissed (stale ids no-op). */
+export function dismissConcern(db: Database, id: number): boolean {
+	return (
+		db
+			.prepare(
+				`UPDATE concerns SET status = 'dismissed',
 		   dismissed_bucket = CASE WHEN severity >= 67 THEN 'high' WHEN severity >= 34 THEN 'medium' ELSE 'low' END,
 		   updated_at = datetime('now')
 		 WHERE id = ? AND status = 'active'`
-	).run(id);
+			)
+			.run(id).changes > 0
+	);
 }
 
 /** The feed: severity first, freshest first within a rank. */

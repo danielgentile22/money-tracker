@@ -126,12 +126,13 @@ export function updateRule(
 }
 
 /** Deleting a Rule reverts its non-correction Transactions to the Plaid mapping. */
-export function deleteRule(db: Database, ruleId: number): void {
-	db.transaction(() => {
+export function deleteRule(db: Database, ruleId: number): boolean {
+	const deleted = db.transaction(() => {
 		db.prepare('DELETE FROM rule_tags WHERE rule_id = ?').run(ruleId);
-		db.prepare('DELETE FROM rules WHERE id = ?').run(ruleId);
+		return db.prepare('DELETE FROM rules WHERE id = ?').run(ruleId).changes > 0;
 	})();
-	recategorizeAll(db);
+	if (deleted) recategorizeAll(db);
+	return deleted;
 }
 
 function today(): string {

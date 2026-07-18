@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Trash2, EyeOff, Eye, GripVertical, Lock } from '@lucide/svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { deserialize } from '$app/forms';
 	import ScanConfirm from '$lib/ScanConfirm.svelte';
 	import type { ScanPlan } from '$lib/scan-estimate';
 	import type { ScanProgress } from '$lib/server/backfill';
@@ -32,10 +33,16 @@
 	});
 	const SIZE_ABBR: Record<WidgetSize, string> = { small: 'S', medium: 'M', large: 'L' };
 
+	let layoutError = $state(false);
 	async function post(action: string, field: string, value: unknown) {
 		const fd = new FormData();
 		fd.set(field, JSON.stringify(value));
-		await fetch(`?/${action}`, { method: 'POST', body: fd });
+		try {
+			const res = await fetch(`?/${action}`, { method: 'POST', body: fd });
+			layoutError = !res.ok || deserialize(await res.text()).type !== 'success';
+		} catch {
+			layoutError = true; // network failure — local state is desynced until resync below
+		}
 		await invalidateAll(); // dashboard/sidebar pick the change up on next load
 	}
 	const saveWidgets = () => post('layout', 'layout', widgetRows);
@@ -134,6 +141,11 @@
 		Drag to reorder. Changes save immediately. Hidden sidebar sections stay reachable under
 		“More” at the bottom of the sidebar.
 	</p>
+	{#if layoutError}
+		<p class="t-body-sm" role="alert" style="margin-bottom: var(--space-4);">
+			⚠ Couldn't save the layout — it snapped back to the last saved state. Try the change again.
+		</p>
+	{/if}
 
 	<div class="layout-cols">
 		<div>

@@ -229,3 +229,8 @@ test('bulk Correction recategorizes every selected Transaction, Rules untouched'
 	expect(txnState(db, untouched)).toEqual({ category: 'Dining', source: 'plaid' });
 	expect(db.prepare('SELECT COUNT(*) FROM rules').pluck().get()).toBe(0);
 });
+
+test('deleteRule reports whether a rule was actually deleted', () => {
+	const db = makeDb();
+	expect(deleteRule(db, 999)).toBe(false);
+});

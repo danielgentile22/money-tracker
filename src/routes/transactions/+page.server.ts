@@ -94,15 +94,18 @@ export const load: PageServerLoad = ({ url }) => {
 			.all() as string[],
 		saved: listReports(db, '/transactions'),
 		hasDimensionFilters:
-			['categories', 'groups', 'accounts', 'tags', 'merchants', 'date', 'from'].some((k) =>
-				url.searchParams.has(k)
-			),
+			// include and exclude (x-prefixed) keys both count as active filters
+			['categories', 'groups', 'accounts', 'tags', 'merchants'].some(
+				(k) => url.searchParams.has(k) || url.searchParams.has(`x${k}`)
+			) ||
+			url.searchParams.has('date') ||
+			url.searchParams.has('from'),
 		amounts: { min: url.searchParams.get('min'), max: url.searchParams.get('max') }
 	};
 };
 
 export const actions: Actions = {
-	...savedReportActions('/transactions', 'all'),
+	...savedReportActions('/transactions', 'all', ['min', 'max']),
 	...ledgerActions(),
 	// the bulk cousin of ?/lookup: every filtered spend charge, fire-and-forget
 	// like the Settings scans (shared one-at-a-time guard and progress channel)

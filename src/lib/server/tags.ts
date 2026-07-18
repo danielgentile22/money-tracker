@@ -46,10 +46,13 @@ export function attachTag(db: Database, txnId: number, tagId: number): void {
 	);
 }
 
-export function detachTag(db: Database, txnId: number, tagId: number): void {
-	db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?').run(
-		txnId,
-		tagId
+/** True when the tag was actually attached (stale posts no-op). */
+export function detachTag(db: Database, txnId: number, tagId: number): boolean {
+	return (
+		db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?').run(
+			txnId,
+			tagId
+		).changes > 0
 	);
 }
 

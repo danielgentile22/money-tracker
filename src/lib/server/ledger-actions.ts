@@ -1,5 +1,6 @@
 import type { Database } from 'better-sqlite3';
 import { db as defaultDb } from '$lib/server/db';
+import { formId } from '$lib/server/form-id';
 import { applyCorrection, applyBulkCorrection } from '$lib/server/corrections';
 import { addTag, attachTag, detachTag, bulkAttach } from '$lib/server/tags';
 import { triggerLookup, enrichAndCategorize } from '$lib/server/resolution';
@@ -42,7 +43,10 @@ export function ledgerActions(db: Database = defaultDb) {
 		},
 		untag: async ({ request }) => {
 			const f = await request.formData();
-			detachTag(db, Number(f.get('id')), Number(f.get('tag_id')));
+			const id = formId(f);
+			const tagId = formId(f, 'tag_id');
+			if (id == null || tagId == null || !detachTag(db, id, tagId))
+				return fail(400, { message: 'no such Tag on that Transaction' });
 			return { ok: true };
 		},
 		// bulk Correction (CONTEXT.md): one Category over the selection, never mints a Rule
