@@ -100,7 +100,11 @@ export function ledgerActions(db: Database = defaultDb) {
 			try {
 				const id = Number(f.get('id'));
 				const outcome = await triggerLookup(db, realReceiptSource, id);
-				// a manual match enriches and re-categorizes right away, no sync wait
+				// dead Gmail connection: nothing was searched, nothing changed — say so
+				if (outcome === 'unsearched')
+					return fail(400, { message: 'no connected inbox — re-enroll Gmail in Settings' });
+				// a fresh match enriches and re-categorizes right away, no sync wait;
+				// 'retained' kept a prior match unchanged, so it needs neither
 				if (outcome === 'matched') await enrichAndCategorize(db, realLlm, [id]).catch(() => {});
 				return { ok: true, lookup: outcome };
 			} catch (e) {

@@ -24,6 +24,7 @@ import { householdContextBlock } from '$lib/server/assistant';
 import { setSecret, deleteSecret } from '$lib/server/keychain';
 import { WIDGETS, readLayout, saveLayout, readSidebar, saveSidebar } from '$lib/server/dashboard';
 import { splitDisplayName } from '$lib/server/split-usage';
+import { localToday } from '$lib/server/balances';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -56,18 +57,24 @@ export const load: PageServerLoad = ({ url }) => {
 			 ORDER BY m.plaid_key`
 		)
 		.all() as { plaid_key: string; category_id: number; category_name: string }[];
+	const thisYear = Number(localToday().slice(0, 4));
 	const plans529 = (
 		db.prepare("SELECT id, name FROM accounts WHERE subtype = '529' ORDER BY id").all() as {
 			id: number;
 			name: string;
 		}[]
-	).map((a) => ({
-		...a,
-		beneficiary: (setting(`529_${a.id}_name`) as string) ?? '',
-		age: (setting(`529_${a.id}_age`) as string) ?? '',
-		target_dollars: (setting(`529_${a.id}_target_dollars`) as string) ?? '',
-		override_monthly_dollars: (setting(`529_${a.id}_override_monthly_dollars`) as string) ?? ''
-	}));
+	).map((a) => {
+		// stored as a birth year (#14); the form still shows "Age today" derived
+		// from the current year, but persisting the year keeps it stable
+		const birthYear = setting(`529_${a.id}_birth_year`) as string | undefined;
+		return {
+			...a,
+			beneficiary: (setting(`529_${a.id}_name`) as string) ?? '',
+			age: birthYear ? String(thisYear - Number(birthYear)) : '',
+			target_dollars: (setting(`529_${a.id}_target_dollars`) as string) ?? '',
+			override_monthly_dollars: (setting(`529_${a.id}_override_monthly_dollars`) as string) ?? ''
+		};
+	});
 	const assumedReturn = (setting('assumed_return_pct') as string) ?? '5';
 
 	// what each scan button would touch — scanCounts shares the scans' own
@@ -177,6 +184,8 @@ export const actions: Actions = {
 	// 'all' or 'month'.
 	categorizeScan: async ({ request }) => {
 		const scope = String((await request.formData()).get('scope')) === 'month' ? 'month' : 'all';
+		if (!hasConnectedInbox(db))
+			return { ok: false, message: 'no connected inbox — re-enroll Gmail below first' };
 		void runCategorizationScan(db, realLlm, scope).catch((e) =>
 			console.error('categorization scan failed:', e)
 		);
@@ -184,6 +193,8 @@ export const actions: Actions = {
 	},
 	receiptScan: async ({ request }) => {
 		const scope = String((await request.formData()).get('scope')) === 'month' ? 'month' : 'all';
+		if (!hasConnectedInbox(db))
+			return { ok: false, message: 'no connected inbox — re-enroll Gmail below first' };
 		void runReceiptScan(db, realReceiptSource, realLlm, scope).catch((e) =>
 			console.error('receipt scan failed:', e)
 		);
