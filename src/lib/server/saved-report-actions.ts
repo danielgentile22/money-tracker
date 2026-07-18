@@ -1,4 +1,5 @@
-import { db } from '$lib/server/db';
+import type { Database } from 'better-sqlite3';
+import { db as defaultDb } from '$lib/server/db';
 import { formId } from '$lib/server/form-id';
 import { parseFilters, serializeFilters, type DatePreset } from '$lib/server/filters';
 import { saveReport, renameReport, deleteReport } from '$lib/server/saved-reports';
@@ -8,12 +9,15 @@ import { fail, type Actions } from '@sveltejs/kit';
  * Form actions for pages with saved reports: a saved report is a name on a
  * canonical URL. `pageKeys` are the page-local params (outside the filter
  * grammar) a saved view keeps: /reports has tab/by, /transactions min/max.
+ * db is injectable for tests (#37); returns are inferred via satisfies so the
+ * route's form prop keeps its fields.
  */
 export function savedReportActions(
 	path: string,
 	defaultPreset: DatePreset,
-	pageKeys: string[] = ['tab', 'by']
-): Actions {
+	pageKeys: string[] = ['tab', 'by'],
+	db: Database = defaultDb
+) {
 	return {
 		saveReport: async ({ request }) => {
 			const form = await request.formData();
@@ -44,5 +48,5 @@ export function savedReportActions(
 				return fail(400, { message: 'no such saved report' });
 			return { ok: true };
 		}
-	};
+	} satisfies Actions;
 }

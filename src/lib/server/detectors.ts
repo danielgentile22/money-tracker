@@ -1,9 +1,12 @@
 import type { Database } from 'better-sqlite3';
-import { monthSummary, spendingByCategory, fullMonthsOfHistory, IS_EXPENSE_CAT } from './analytics';
+import { monthSummary, spendingByCategory, fullMonthsOfHistory, IS_EXPENSE_CAT, shiftMonth } from './analytics';
+import { shiftDays } from './weekly-digest';
+import { getSetting } from './settings';
 import { budgetStatus } from './budgets';
 import { localToday } from './balances';
 import { upsertConcerns, expireConcerns, identityOf, type ConcernCandidate } from './concerns';
 import { fmtUSD } from '../money';
+import { fmtMonth } from '../dates';
 
 // Detector registry (PRD Phase 2): pure-ish functions sharing one signature —
 // ledger aggregates + knob values in, Concern candidates out. Knob defaults
@@ -28,19 +31,9 @@ export type DetectorDef = {
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-const monthLabel = (month: string) =>
-	new Date(`${month}-15T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+const monthLabel = (month: string) => fmtMonth(month);
 
 const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
-
-function shiftMonth(month: string, delta: number): string {
-	const [y, m] = month.split('-').map(Number);
-	const n = y * 12 + (m - 1) + delta;
-	return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
-}
-
-const shiftDays = (date: string, delta: number) =>
-	new Date(Date.parse(date + 'T00:00:00Z') + delta * 86_400_000).toISOString().slice(0, 10);
 
 // Per-transaction detectors look back a trailing window rather than the current
 // calendar month, so a month-end charge synced after rollover (Plaid's 1–3 day
@@ -421,10 +414,9 @@ export const DETECTORS: DetectorDef[] = [
 ];
 
 export function knobValues(db: Database, det: DetectorDef): Record<string, number> {
-	const get = db.prepare('SELECT value FROM settings WHERE key = ?').pluck();
 	const out: Record<string, number> = {};
 	for (const k of det.knobs) {
-		const override = get.get(`detector_${det.key}_${k.key}`) as string | undefined;
+		const override = getSetting(db, `detector_${det.key}_${k.key}`);
 		const n = override == null ? NaN : Number(override);
 		out[k.key] = Number.isFinite(n) ? n : k.default;
 	}
@@ -432,10 +424,7 @@ export function knobValues(db: Database, det: DetectorDef): Record<string, numbe
 }
 
 export function detectorEnabled(db: Database, key: string): boolean {
-	return (
-		db.prepare('SELECT value FROM settings WHERE key = ?').pluck().get(`detector_${key}_enabled`) !==
-		'0'
-	);
+	return getSetting(db, `detector_${key}_enabled`) !== '0';
 }
 
 /** Detectors still below their history minimum — the UI must not imply "all clear". */

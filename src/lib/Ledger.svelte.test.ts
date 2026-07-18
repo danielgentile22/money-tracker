@@ -6,15 +6,8 @@ import { mount, unmount, flushSync } from 'svelte';
 import { page } from '$app/state';
 import Ledger from './Ledger.svelte';
 
-// jsdom has no dialog.showModal — the Ledger only needs open/close semantics
+// dialog.showModal polyfill lives in src/test/component-setup.ts (#80)
 beforeEach(() => {
-	HTMLDialogElement.prototype.showModal = function () {
-		this.setAttribute('open', '');
-	};
-	HTMLDialogElement.prototype.close = function () {
-		this.removeAttribute('open');
-		this.dispatchEvent(new Event('close'));
-	};
 	vi.restoreAllMocks();
 	page.url = new URL('http://localhost:5273/transactions') as typeof page.url;
 });

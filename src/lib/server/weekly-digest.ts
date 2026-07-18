@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3';
+import { dollars, topMerchants, dataQualityCounts } from './digest-common';
 
 // The weekly counterpart of digest.ts: the ONLY payload the Weekly Recap
 // narration ever sees (ADR-0001 discipline). Same contract as the monthly
@@ -30,8 +31,6 @@ type WeekFigures = {
 	cash_flow_dollars: number;
 	txn_count: number;
 };
-
-const dollars = (cents: number) => Math.round(cents) / 100;
 
 /** date ± delta days, pure UTC date-string math (TZ-safe). */
 export function shiftDays(date: string, delta: number): string {
@@ -89,15 +88,7 @@ export function buildWeeklyDigest(db: Database, weekStart: string): WeeklyDigest
 	const spend = categorySpend(db, weekStart);
 	const prevSpend = categorySpend(db, prevStart);
 
-	const merchants = db
-		.prepare(
-			`SELECT COALESCE(merchant, name) AS name, SUM(-amount_cents) AS spent_cents, COUNT(*) AS txn_count
-			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
-			   AND date >= ? AND date < ?
-			 GROUP BY COALESCE(merchant, name) ORDER BY spent_cents DESC LIMIT 5`
-		)
-		.all(weekStart, weekEnd(weekStart)) as { name: string; spent_cents: number; txn_count: number }[];
+	const merchants = topMerchants(db, weekStart, weekEnd(weekStart), 5);
 
 	const oneOffs = db
 		.prepare(
@@ -115,8 +106,6 @@ export function buildWeeklyDigest(db: Database, weekStart: string): WeeklyDigest
 		spent_cents: number;
 		category: string | null;
 	}[];
-
-	const count = (sql: string) => db.prepare(sql).pluck().get() as number;
 
 	return {
 		week_start: weekStart,
@@ -139,12 +128,6 @@ export function buildWeeklyDigest(db: Database, weekStart: string): WeeklyDigest
 			amount_dollars: dollars(o.spent_cents),
 			category: o.category
 		})),
-		data_quality: {
-			open_review_items: count("SELECT COUNT(*) FROM review_items WHERE status = 'open'"),
-			unresolved_charges: count(
-				'SELECT COUNT(*) FROM transactions WHERE unresolved = 1 AND is_investment_activity = 0'
-			),
-			rejected_not_reopened: count("SELECT COUNT(*) FROM review_items WHERE status = 'rejected'")
-		}
+		data_quality: dataQualityCounts(db)
 	};
 }

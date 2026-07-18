@@ -10,6 +10,8 @@ import {
 	type PeriodView
 } from '$lib/server/split-usage';
 import { formId } from '$lib/server/form-id';
+import { dollarsToCents } from '$lib/server/form-utils';
+import { getSetting, putSetting as putSettingIn, deleteSetting } from '$lib/server/settings';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -19,10 +21,8 @@ ensureSplitSchema(db);
 // Everything identity-shaped (names, patterns) lives in settings, never code.
 const PROVIDERS = ['claude', 'codex'];
 
-const setting = (key: string) =>
-	db.prepare('SELECT value FROM settings WHERE key = ?').pluck().get(key) as string | undefined;
-const putSetting = (key: string, value: string) =>
-	db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+const setting = (key: string) => getSetting(db, key);
+const putSetting = (key: string, value: string) => putSettingIn(db, key, value);
 
 const sharePct = () => {
 	const n = Number(setting('split_share_pct'));
@@ -100,10 +100,10 @@ async function act(fn: () => void | Promise<void>) {
 	}
 }
 
-const dollarsToCents = (raw: FormDataEntryValue | null) => {
-	const n = Number(String(raw ?? '').replace(/[$,]/g, ''));
-	if (!Number.isFinite(n) || n <= 0) throw new Error('amount must be a positive dollar value');
-	return Math.round(n * 100);
+const positiveCents = (raw: FormDataEntryValue | null) => {
+	const c = dollarsToCents(raw);
+	if (c == null || c <= 0) throw new Error('amount must be a positive dollar value');
+	return c;
 };
 
 const isoDate = (raw: FormDataEntryValue | null) => {
@@ -125,7 +125,7 @@ export const actions = {
 						'INSERT INTO split_charges (provider, date, amount_cents, note) VALUES (?, ?, ?, ?) RETURNING id'
 					)
 					.pluck()
-					.get(provider, date, dollarsToCents(f.get('amount')), String(f.get('note') ?? '').trim() || null) as number;
+					.get(provider, date, positiveCents(f.get('amount')), String(f.get('note') ?? '').trim() || null) as number;
 				// the preceding period's window just ended at this charge — even a
 				// backdated entry re-derives its (possibly frozen) predecessor
 				invalidatePeriodBefore(db, provider, date, id);
@@ -162,7 +162,7 @@ export const actions = {
 		return act(() => {
 			db.prepare('INSERT INTO split_payments (date, amount_cents, note) VALUES (?, ?, ?)').run(
 				isoDate(f.get('date')),
-				dollarsToCents(f.get('amount')),
+				positiveCents(f.get('amount')),
 				String(f.get('note') ?? '').trim() || null
 			);
 		});
@@ -206,7 +206,7 @@ export const actions = {
 			}
 			const save = (key: string, value: string) => {
 				if (value) putSetting(key, value);
-				else db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+				else deleteSetting(db, key);
 			};
 			save('split_display_name', String(f.get('display_name') ?? '').trim());
 			save('split_partner_name', String(f.get('partner_name') ?? '').trim());

@@ -1,5 +1,6 @@
 import type { Database } from 'better-sqlite3';
-import { monthSummary, fullMonthsOfHistory, MIN_FULL_MONTHS } from './analytics';
+import { monthSummary, fullMonthsOfHistory, MIN_FULL_MONTHS, shiftMonth } from './analytics';
+import { getSetting } from './settings';
 import { fmtUSD } from '../money';
 
 // Projections (PRD Phase 2): deterministic arithmetic with the assumptions
@@ -17,12 +18,6 @@ export type RunRate = {
 	months: { month: string; projected_cents: number }[];
 	assumptions: string[];
 };
-
-function shiftMonth(month: string, delta: number): string {
-	const [y, m] = month.split('-').map(Number);
-	const n = y * 12 + (m - 1) + delta;
-	return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
-}
 
 const monthName = (month: string) =>
 	new Date(`${month}-15T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
@@ -205,11 +200,8 @@ export function counterfactual(db: Database): Counterfactual {
 	};
 }
 
-const setting = (db: Database, key: string) =>
-	db.prepare('SELECT value FROM settings WHERE key = ?').pluck().get(key) as string | undefined;
-
 export function assumedReturnPct(db: Database): number {
-	const n = Number(setting(db, 'assumed_return_pct'));
+	const n = Number(getSetting(db, 'assumed_return_pct'));
 	return Number.isFinite(n) && n > -100 ? n : 5;
 }
 
@@ -243,18 +235,18 @@ export function plans529(db: Database, today: string): (Plan529 | NeedsSetup529)
 	return accounts.map((a) => {
 		// Age is derived from a stored birth year so the college year stays fixed
 		// to the child across calendar years (#14) — never re-entered annually.
-		const birthYear = Number(setting(db, `529_${a.id}_birth_year`));
+		const birthYear = Number(getSetting(db, `529_${a.id}_birth_year`));
 		const age = todayYear - birthYear;
-		const targetDollars = Number(setting(db, `529_${a.id}_target_dollars`));
+		const targetDollars = Number(getSetting(db, `529_${a.id}_target_dollars`));
 		if (!Number.isFinite(birthYear) || !(targetDollars > 0))
 			return { needsSetup: true, account_id: a.id, account_name: a.name };
-		const overrideDollars = Number(setting(db, `529_${a.id}_override_monthly_dollars`));
+		const overrideDollars = Number(getSetting(db, `529_${a.id}_override_monthly_dollars`));
 		const hasOverride = Number.isFinite(overrideDollars) && overrideDollars >= 0;
 		return project529(
 			{
 				account_id: a.id,
 				account_name: a.name,
-				beneficiary: setting(db, `529_${a.id}_name`) ?? a.name,
+				beneficiary: getSetting(db, `529_${a.id}_name`) ?? a.name,
 				age,
 				target_cents: Math.round(targetDollars * 100),
 				balance_cents: a.current_balance_cents ?? 0,

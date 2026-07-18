@@ -1,7 +1,8 @@
 import type { Database } from 'better-sqlite3';
-import { monthSummary, spendingByCategory } from './analytics';
+import { monthSummary, spendingByCategory, shiftMonth } from './analytics';
 import { activeConcerns } from './concerns';
 import { runRateProjection, counterfactual, plans529 } from './projections';
+import { dollars, topMerchants, dataQualityCounts } from './digest-common';
 
 // The digest is the ONLY payload Claude's narration ever sees (ADR-0001 egress
 // channel #2 — this type is the contract). It physically has no fields for
@@ -54,8 +55,6 @@ type MonthFigures = {
 	savings_rate_pct: number | null;
 };
 
-const dollars = (cents: number) => Math.round(cents) / 100;
-
 function figures(db: Database, month: string): MonthFigures {
 	const s = monthSummary(db, month);
 	return {
@@ -68,29 +67,12 @@ function figures(db: Database, month: string): MonthFigures {
 	};
 }
 
-function prevMonth(month: string): string {
-	const [y, m] = month.split('-').map(Number);
-	return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
-}
-
 export function buildDigest(db: Database, period: string, today: string): Digest {
-	const prev = prevMonth(period);
+	const prev = shiftMonth(period, -1);
 	const prevSpend = new Map(
 		spendingByCategory(db, prev).map((c) => [c.name ?? 'Uncategorized', c.spent_cents])
 	);
-	const merchants = db
-		.prepare(
-			`SELECT COALESCE(merchant, name) AS name, SUM(-amount_cents) AS spent_cents, COUNT(*) AS txn_count
-			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
-			   AND date >= ? AND date < ?
-			 GROUP BY COALESCE(merchant, name) ORDER BY spent_cents DESC LIMIT 8`
-		)
-		.all(`${period}-01`, nextMonthStart(period)) as {
-		name: string;
-		spent_cents: number;
-		txn_count: number;
-	}[];
+	const merchants = topMerchants(db, `${period}-01`, `${shiftMonth(period, 1)}-01`, 8);
 
 	const runRate = runRateProjection(db, today);
 	const fix = counterfactual(db);
@@ -151,25 +133,7 @@ export function buildDigest(db: Database, period: string, today: string): Digest
 						]
 			)
 		},
-		data_quality: {
-			open_review_items: count(db, "SELECT COUNT(*) FROM review_items WHERE status = 'open'"),
-			unresolved_charges: count(
-				db,
-				'SELECT COUNT(*) FROM transactions WHERE unresolved = 1 AND is_investment_activity = 0'
-			),
-			rejected_not_reopened: count(
-				db,
-				"SELECT COUNT(*) FROM review_items WHERE status = 'rejected'"
-			)
-		}
+		data_quality: dataQualityCounts(db)
 	};
 }
 
-function nextMonthStart(month: string): string {
-	const [y, m] = month.split('-').map(Number);
-	return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
-}
-
-function count(db: Database, sql: string): number {
-	return db.prepare(sql).pluck().get() as number;
-}

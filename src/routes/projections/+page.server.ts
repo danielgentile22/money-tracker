@@ -1,14 +1,8 @@
 import { db } from '$lib/server/db';
 import { runRateProjection, plans529, counterfactual } from '$lib/server/projections';
-import { monthSummary, monthRange } from '$lib/server/analytics';
+import { monthSummary, monthRange, shiftMonth } from '$lib/server/analytics';
 import { localToday } from '$lib/server/balances';
 import type { PageServerLoad } from './$types';
-
-function shiftMonth(month: string, delta: number): string {
-	const [y, m] = month.split('-').map(Number);
-	const n = y * 12 + (m - 1) + delta;
-	return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
-}
 
 export const load: PageServerLoad = () => {
 	const today = localToday();

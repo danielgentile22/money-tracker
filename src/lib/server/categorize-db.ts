@@ -78,9 +78,9 @@ export function recategorizeAll(db: Database, onlySource?: 'plaid' | 'rule'): vo
 			`SELECT id, name, plaid_merchant_name, amount_cents, plaid_category_primary, plaid_category_detailed, plaid_confidence
 			 FROM transactions
 			 WHERE category_source NOT IN ('correction', 'proposal', 'llm', 'llm+receipt')
-			 ${onlySource ? `AND category_source = '${onlySource}'` : ''}`
+			 ${onlySource ? 'AND category_source = ?' : ''}`
 		)
-		.all() as {
+		.all(...(onlySource ? [onlySource] : [])) as {
 		id: number;
 		name: string;
 		plaid_merchant_name: string | null;

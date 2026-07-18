@@ -3,6 +3,7 @@ import { formId } from '$lib/server/form-id';
 import { updateRule, deleteRule } from '$lib/server/corrections';
 import { groupedCategories } from '$lib/server/groups';
 import { addTag } from '$lib/server/tags';
+import { dollarsToCents } from '$lib/server/form-utils';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -35,11 +36,10 @@ export const load: PageServerLoad = () => {
 	};
 };
 
-const dollarsToCents = (v: FormDataEntryValue | null): number | null => {
-	const s = (v as string)?.trim();
-	if (!s) return null;
-	const n = Number(s);
-	return Number.isFinite(n) ? Math.round(Math.abs(n) * 100) : null;
+// amount bounds are magnitudes — abs() matches how the owner types them
+const boundCents = (v: FormDataEntryValue | null): number | null => {
+	const c = dollarsToCents(v);
+	return c == null ? null : Math.abs(c);
 };
 
 export const actions: Actions = {
@@ -56,8 +56,8 @@ export const actions: Actions = {
 		try {
 			updateRule(db, Number(f.get('id')), {
 				merchant,
-				minAmountCents: dollarsToCents(f.get('min')),
-				maxAmountCents: dollarsToCents(f.get('max')),
+				minAmountCents: boundCents(f.get('min')),
+				maxAmountCents: boundCents(f.get('max')),
 				categoryId: Number(f.get('category_id')) || null,
 				tagIds
 			});

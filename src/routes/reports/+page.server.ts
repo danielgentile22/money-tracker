@@ -5,7 +5,7 @@ import { groupedCategories } from '$lib/server/groups';
 import { listTags } from '$lib/server/tags';
 import { listReports } from '$lib/server/saved-reports';
 import { savedReportActions } from '$lib/server/saved-report-actions';
-import type { PageServerLoad, Actions } from './$types';
+import type { PageServerLoad } from './$types';
 
 const DEFAULT_PRESET = 'last-12-months';
 const TABS = ['spending', 'income', 'networth'] as const;
@@ -46,4 +46,4 @@ export const load: PageServerLoad = ({ url }) => {
 	};
 };
 
-export const actions: Actions = savedReportActions('/reports', DEFAULT_PRESET);
+export const actions = savedReportActions('/reports', DEFAULT_PRESET);
