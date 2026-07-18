@@ -39,12 +39,12 @@ export function monthSummary(db: Database, month: string): MonthSummary {
 	const row = db
 		.prepare(
 			`SELECT
-			   COALESCE(SUM(CASE WHEN t.is_transfer = 0 AND t.amount_cents > 0 AND NOT ${IS_EXPENSE_CAT}
+			   COALESCE(SUM(CASE WHEN t.is_transfer = 0 AND t.is_excluded = 0 AND t.amount_cents > 0 AND NOT ${IS_EXPENSE_CAT}
 			                     THEN t.amount_cents END), 0) AS income,
-			   COALESCE(SUM(CASE WHEN t.is_transfer = 0 AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
+			   COALESCE(SUM(CASE WHEN t.is_transfer = 0 AND t.is_excluded = 0 AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
 			                     THEN -t.amount_cents END), 0) AS expenses,
 			   COALESCE(SUM(CASE WHEN t.is_saved = 1 THEN ABS(t.amount_cents) END), 0) AS saved,
-			   COALESCE(SUM(t.is_transfer = 0), 0) AS txn_count
+			   COALESCE(SUM(t.is_transfer = 0 AND t.is_excluded = 0), 0) AS txn_count
 			 FROM transactions t
 			 LEFT JOIN categories c ON c.id = t.category_id
 			 LEFT JOIN category_groups g ON g.id = c.group_id
@@ -75,7 +75,7 @@ export function spendingByCategory(db: Database, month: string): CategorySpend[]
 			 FROM transactions t
 			 LEFT JOIN categories c ON c.id = t.category_id
 			 LEFT JOIN category_groups g ON g.id = c.group_id
-			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
+			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.is_excluded = 0
 			   AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
 			   AND t.date >= ? AND t.date < ?
 			 GROUP BY t.category_id ORDER BY spent_cents DESC`
@@ -92,7 +92,7 @@ export function incomeByCategory(db: Database, month: string): CategoryIncome[] 
 		.prepare(
 			`SELECT category_id, SUM(amount_cents) AS income_cents
 			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents > 0
+			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND is_excluded = 0 AND amount_cents > 0
 			   AND date >= ? AND date < ?
 			 GROUP BY category_id`
 		)
@@ -131,7 +131,7 @@ export function categoryTrend(db: Database, categoryId: number, from: string, to
 			 FROM transactions t
 			 LEFT JOIN categories c ON c.id = t.category_id
 			 LEFT JOIN category_groups g ON g.id = c.group_id
-			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
+			 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.is_excluded = 0
 			   AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
 			   AND t.category_id = ? AND t.date >= ? AND t.date < ?
 			 GROUP BY month`

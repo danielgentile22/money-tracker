@@ -35,7 +35,7 @@ export type CashFlow = {
 
 export function cashFlow(db: Database, f: FilterSet, today = localToday()): CashFlow {
 	const { clauses, params } = compileFilters(f, today);
-	const base = `${clauses.join(' AND ')} AND t.is_transfer = 0`;
+	const base = `${clauses.join(' AND ')} AND t.is_transfer = 0 AND t.is_excluded = 0`;
 
 	const income = db
 		.prepare(

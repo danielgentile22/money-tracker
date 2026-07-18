@@ -65,7 +65,7 @@ export function receiptScanStats(db: Database): Record<string, number> {
 	const rows = db
 		.prepare(
 			`SELECT COALESCE(receipt_search_state, 'never') AS s, COUNT(*) AS n FROM transactions
-			 WHERE pending = 0 AND is_transfer = 0 AND is_investment_activity = 0 AND amount_cents < 0
+			 WHERE pending = 0 AND is_transfer = 0 AND is_excluded = 0 AND is_investment_activity = 0 AND amount_cents < 0
 			 GROUP BY s`
 		)
 		.all() as { s: string; n: number }[];
@@ -78,8 +78,8 @@ const monthWindow = (scope: 'all' | 'month') =>
 // The scans' WHERE fragments, shared with scanCounts so the Settings confirm
 // popup counts exactly what a run would touch (#17).
 const CATEGORIZE_WHERE = `category_source IN ('plaid', 'llm', 'llm+receipt')
-   AND is_transfer = 0 AND is_investment_activity = 0`;
-const SEARCH_WHERE = `pending = 0 AND is_transfer = 0 AND is_investment_activity = 0
+   AND is_transfer = 0 AND is_excluded = 0 AND is_investment_activity = 0`;
+const SEARCH_WHERE = `pending = 0 AND is_transfer = 0 AND is_excluded = 0 AND is_investment_activity = 0
    AND amount_cents < 0`;
 // 'month' only revisits not-yet-matched charges; 'all' redoes everything
 const searchScope = (scope: 'all' | 'month') =>

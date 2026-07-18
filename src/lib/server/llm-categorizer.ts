@@ -154,7 +154,7 @@ export async function runLlmCategorization(
 			 FROM transactions t JOIN accounts a ON a.id = t.account_id
 			 WHERE t.id IN (SELECT value FROM json_each(?))
 			   AND t.category_source IN ('plaid', 'llm', 'llm+receipt')
-			   AND t.is_transfer = 0 AND t.is_investment_activity = 0
+			   AND t.is_transfer = 0 AND t.is_excluded = 0 AND t.is_investment_activity = 0
 			 ORDER BY t.id`
 		)
 		.all(JSON.stringify(txnIds)) as LlmCharge[];

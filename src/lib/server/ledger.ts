@@ -22,6 +22,7 @@ export type LedgerRow = {
 	pending: number;
 	unresolved: number;
 	is_transfer: number;
+	is_excluded: number;
 	is_saved: number;
 	category_source: string | null;
 	receipt_search_state: string | null;
@@ -33,7 +34,7 @@ export type LedgerRow = {
 };
 
 const BASE = `SELECT t.id, t.date, t.merchant, t.name, t.amount_cents, t.pending, t.unresolved,
-       t.is_transfer, t.is_saved, t.category_source, t.receipt_search_state, t.receipt_facts_json,
+       t.is_transfer, t.is_excluded, t.is_saved, t.category_source, t.receipt_search_state, t.receipt_facts_json,
        a.name AS account_name, c.name AS category_name,
        rs.cadence AS recurring_cadence, rs.typical_amount_cents AS recurring_typical_cents
 FROM transactions t
@@ -63,8 +64,8 @@ export function queryLedger(db: Database, f: FilterSet, opts: LedgerOpts = {}): 
 		params.push(opts.maxAmountCents);
 	}
 	// aggregate views never count Transfers (ADR-0003); their drill-downs match
-	if (opts.sign === 'spending') clauses.push('t.is_transfer = 0', 't.amount_cents < 0');
-	if (opts.sign === 'income') clauses.push('t.is_transfer = 0', 't.amount_cents > 0');
+	if (opts.sign === 'spending') clauses.push('t.is_transfer = 0 AND t.is_excluded = 0', 't.amount_cents < 0');
+	if (opts.sign === 'income') clauses.push('t.is_transfer = 0 AND t.is_excluded = 0', 't.amount_cents > 0');
 	// bound + coerced: user-controlled ?page must never reach SQL text, and
 	// NaN/Infinity/oversized values must not reach the binder (#73)
 	const toInt = (v: number, fallback: number) =>
@@ -106,7 +107,8 @@ export function toCsv(rows: LedgerRow[]): string {
 		if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
 		return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 	};
-	const header = 'date,merchant,account,category,amount,pending,transfer,saved,unresolved';
+	const header =
+		'date,merchant,account,category,amount,pending,transfer,excluded,saved,unresolved';
 	const lines = rows.map((r) =>
 		[
 			r.date,
@@ -116,6 +118,7 @@ export function toCsv(rows: LedgerRow[]): string {
 			(r.amount_cents / 100).toFixed(2),
 			r.pending ? 'yes' : '',
 			r.is_transfer ? 'yes' : '',
+			r.is_excluded ? 'yes' : '',
 			r.is_saved ? 'yes' : '',
 			r.unresolved ? 'yes' : ''
 		].join(',')

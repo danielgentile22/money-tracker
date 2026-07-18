@@ -4,6 +4,8 @@ import { test, expect } from 'vitest';
 import { makeDb, insertTxn, categoryId } from '../../test/db';
 import { ledgerActions } from './ledger-actions';
 import { savedReportActions } from './saved-report-actions';
+import { monthSummary } from './analytics';
+import { queryLedger } from './ledger';
 
 function post(fields: Record<string, string | string[]>) {
 	const fd = new FormData();
@@ -133,4 +135,24 @@ test('savedReportActions: save canonicalizes the query, rename validates, delete
 
 	await a.deleteReport(post({ id: String(saved.id) }));
 	expect(db.prepare('SELECT COUNT(*) FROM saved_reports').pluck().get()).toBe(0);
+});
+
+test('toggleExclude flips the flag and drops the row out of aggregates', async () => {
+	const db = makeDb();
+	const id = insertTxn(db, { date: '2026-06-01', amount_cents: -2500, merchant: 'Deposit Reversal' });
+	const a = ledgerActions(db);
+	const spent = () =>
+		monthSummary(db, '2026-06').expenses_cents;
+
+	expect(spent()).toBe(2500);
+
+	expect(await a.toggleExclude(post({ id: String(id) }))).toEqual({ ok: true });
+	expect(spent()).toBe(0); // excluded from totals...
+	// ...but still in the ledger list, so it can be un-excluded
+	expect(queryLedger(db, { date: { preset: 'all' } }).some((r) => r.id === id && r.is_excluded === 1)).toBe(true);
+
+	await a.toggleExclude(post({ id: String(id) })); // toggles back
+	expect(spent()).toBe(2500);
+
+	expect(((await a.toggleExclude(post({ id: '99999' }))) as { status: number }).status).toBe(400);
 });

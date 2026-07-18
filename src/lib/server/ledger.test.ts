@@ -78,7 +78,7 @@ test('CSV escapes commas, quotes, and newlines; amounts in dollars', () => {
 	const db = makeDb();
 	const csv = toCsv(queryLedger(db, { accounts: { include: [1] }, date: { preset: 'all' } }));
 	const lines = csv.trimEnd().split('\n');
-	expect(lines[0]).toBe('date,merchant,account,category,amount,pending,transfer,saved,unresolved');
+	expect(lines[0]).toBe('date,merchant,account,category,amount,pending,transfer,excluded,saved,unresolved');
 	const joes = lines.find((l) => l.includes('Joes'));
 	expect(joes).toContain('"Joes ""Pizza"",\nInc"'.split('\n')[0]); // opening of quoted field
 	expect(csv).toContain('"Joes ""Pizza"",\nInc"');

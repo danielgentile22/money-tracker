@@ -70,7 +70,7 @@ function rolloverBalance(db: Database, categoryId: number, anchor: string, month
 		.prepare(
 			`SELECT substr(date, 1, 7) AS month, SUM(-amount_cents) AS spent
 			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0
+			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND is_excluded = 0
 			   AND category_id = ? AND date >= ? AND date < ?
 			 GROUP BY month`
 		)

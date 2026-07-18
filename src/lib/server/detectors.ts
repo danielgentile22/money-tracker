@@ -61,7 +61,7 @@ const feesInterest: DetectorDef = {
 				`SELECT t.id, t.date, t.merchant, t.name, t.amount_cents, c.name AS category_name
 				 FROM transactions t JOIN categories c ON c.id = t.category_id
 				 WHERE c.name IN ('Fees', 'Interest') AND t.amount_cents < 0
-				   AND t.is_transfer = 0 AND t.is_investment_activity = 0
+				   AND t.is_transfer = 0 AND t.is_excluded = 0 AND t.is_investment_activity = 0
 				   AND t.date >= ? AND t.date <= ?`
 			)
 			.all(shiftDays(today, -LOOKBACK_DAYS), today) as TxnRow[];
@@ -90,7 +90,7 @@ const largeOneOff: DetectorDef = {
 			.prepare(
 				`SELECT t.id, t.date, t.merchant, t.name, t.amount_cents, NULL AS category_name
 				 FROM transactions t
-				 WHERE t.amount_cents <= ? AND t.is_transfer = 0 AND t.is_investment_activity = 0
+				 WHERE t.amount_cents <= ? AND t.is_transfer = 0 AND t.is_excluded = 0 AND t.is_investment_activity = 0
 				   AND t.recurring_series_id IS NULL AND t.date >= ? AND t.date <= ?`
 			)
 			.all(-floorCents, shiftDays(today, -LOOKBACK_DAYS), today) as TxnRow[];
@@ -156,7 +156,7 @@ const spendSpike: DetectorDef = {
 				 FROM transactions t
 				 LEFT JOIN categories c ON c.id = t.category_id
 				 LEFT JOIN category_groups g ON g.id = c.group_id
-				 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0
+				 WHERE t.is_investment_activity = 0 AND t.is_transfer = 0 AND t.is_excluded = 0
 				   AND (t.amount_cents < 0 OR ${IS_EXPENSE_CAT})
 				   AND t.date >= ? AND t.date < ?
 				 GROUP BY t.category_id`
@@ -168,7 +168,7 @@ const spendSpike: DetectorDef = {
 		const avgBy = new Map(avgRows.map((r) => [r.category_id, r.avg_cents]));
 		const txnIds = db.prepare(
 			`SELECT id FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
+			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND is_excluded = 0 AND amount_cents < 0
 			   AND substr(date, 1, 7) = ? AND category_id IS ?`
 		);
 		const out: ConcernCandidate[] = [];
@@ -337,7 +337,7 @@ const duplicateCharge: DetectorDef = {
 		const rows = db
 			.prepare(
 				`SELECT id, merchant, date, amount_cents FROM transactions
-				 WHERE amount_cents < 0 AND merchant IS NOT NULL AND is_transfer = 0
+				 WHERE amount_cents < 0 AND merchant IS NOT NULL AND is_transfer = 0 AND is_excluded = 0
 				   AND is_investment_activity = 0 AND recurring_series_id IS NULL
 				   AND date >= ? AND date <= ?
 				 ORDER BY merchant COLLATE NOCASE, amount_cents, date`
@@ -380,7 +380,7 @@ const budgetOverage: DetectorDef = {
 		const month = today.slice(0, 7);
 		const txnIds = db.prepare(
 			`SELECT id FROM transactions
-			 WHERE category_id = ? AND amount_cents < 0 AND is_transfer = 0
+			 WHERE category_id = ? AND amount_cents < 0 AND is_transfer = 0 AND is_excluded = 0
 			   AND is_investment_activity = 0 AND substr(date, 1, 7) = ?`
 		);
 		return budgetStatus(db, month)

@@ -125,7 +125,7 @@ export function runRecurringDetection(db: Database): void {
 	const txns = db
 		.prepare(
 			`SELECT id, merchant, date, amount_cents FROM transactions
-			 WHERE merchant IS NOT NULL AND is_transfer = 0 AND is_investment_activity = 0
+			 WHERE merchant IS NOT NULL AND is_transfer = 0 AND is_excluded = 0 AND is_investment_activity = 0
 				   AND lower(merchant) NOT IN (SELECT merchant FROM muted_merchants)`
 		)
 		.all() as RecurringTxn[];

@@ -41,6 +41,19 @@ export function ledgerActions(db: Database = defaultDb) {
 			attachTag(db, Number(f.get('id')), addTag(db, name));
 			return { ok: true };
 		},
+		// Manual exclusion: drops one Transaction out of every aggregate (totals,
+		// graphs, budgets, detectors) without deleting it. Stays in the ledger list
+		// and in balance math — the money did move, the bank still counts it.
+		toggleExclude: async ({ request }) => {
+			const f = await request.formData();
+			const id = formId(f);
+			if (id == null) return fail(400, { message: 'no such Transaction' });
+			const changed = db
+				.prepare('UPDATE transactions SET is_excluded = 1 - is_excluded WHERE id = ?')
+				.run(id).changes;
+			if (!changed) return fail(400, { message: 'no such Transaction' });
+			return { ok: true };
+		},
 		untag: async ({ request }) => {
 			const f = await request.formData();
 			const id = formId(f);

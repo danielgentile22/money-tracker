@@ -19,7 +19,7 @@ export function topMerchants(
 		.prepare(
 			`SELECT COALESCE(merchant, name) AS name, SUM(-amount_cents) AS spent_cents, COUNT(*) AS txn_count
 			 FROM transactions
-			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND amount_cents < 0
+			 WHERE is_investment_activity = 0 AND is_transfer = 0 AND is_excluded = 0 AND amount_cents < 0
 			   AND date >= ? AND date < ?
 			 GROUP BY COALESCE(merchant, name) ORDER BY spent_cents DESC LIMIT ?`
 		)
